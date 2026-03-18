@@ -1,0 +1,33 @@
+[package]
+name = "xai-imagine-generator"
+version = "1.0.0"
+edition = "2021"
+description = "xAI Imagine API — Batch Image Generator with Randomizer"
+authors = ["Eric Valls Gramunt"]
+
+[dependencies]
+slint = "1.9"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+regex = "1"
+rand = "0.8"
+chrono = "0.4"
+rfd = "0.15"
+dirs = "6.0.0"
+
+[build-dependencies]
+slint-build = "1.9"
+winresource = "0.1"
+
+[[bin]]
+name = "xai-imagine-generator"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"     # optimize for size
+lto = true          # link-time optimization
+strip = true        # strip debug symbols
+codegen-units = 1   # single codegen unit for better optimization

@@ -1,0 +1,373 @@
+// ui/main.slint — xAI Imagine Batch Generator (Rust + Slint)
+
+import { Button, LineEdit, ComboBox, CheckBox, SpinBox, TextEdit,
+         GroupBox, ProgressIndicator, VerticalBox, HorizontalBox,
+         ScrollView, Slider, StandardButton } from "std-widgets.slint";
+
+// ─── Color palette ───
+global Theme {
+    out property <color> bg: #0d0d0d;
+    out property <color> surface: #1a1a1a;
+    out property <color> border: #2a2a2a;
+    out property <color> text: #e0e0e0;
+    out property <color> text-dim: #888888;
+    out property <color> accent: #5b8cd4;
+    out property <color> green: #6fcf6f;
+    out property <color> red: #cf6f6f;
+    out property <color> purple: #b08cdf;
+    out property <color> cyan: #8ccfdf;
+    out property <color> yellow: #f0c674;
+}
+
+export component MainWindow inherits Window {
+    title: "xAI Imagine — Batch Generator v1 (Rust)";
+    min-width: 870px;
+    min-height: 1220px;
+    preferred-width: 880px;
+    preferred-height: 1230px;
+    background: Theme.bg;
+    icon: @image-url("../icons/xai_generator.png");
+
+    // ─── Properties (bound from Rust) ───
+    in-out property <string> api-key;
+    in-out property <string> prompt-base;
+    in-out property <string> preview-text;
+    in-out property <string> log-text;
+    in-out property <string> output-folder;
+    in-out property <string> status-text: "● DETENIDO";
+    in-out property <color> status-color: Theme.text-dim;
+    in-out property <string> countdown-text: "--:--";
+    in-out property <int> generation-count: 0;
+    in-out property <float> progress-value: 0;
+    in-out property <bool> progress-indeterminate: false;
+    in-out property <string> progress-label: "Esperando...";
+
+    // Mode selector
+    in-out property <int> current-mode: 0; // 0=A, 1=B
+
+    // Model
+    in-out property <int> model-index: 0;
+    in-out property <[string]> model-list: ["grok-imagine-image", "grok-imagine-image-pro"];
+
+    // Theme presets for Mode B
+    in-out property <int> theme-index: 0;
+    in-out property <[string]> theme-list: [
+        "Tsundere School", "Cyberpunk", "Gothic",
+        "Miko / Shrine", "Casual Modern", "🎲 Full Random"
+    ];
+
+    // Interval
+    in-out property <int> interval-secs: 60;
+
+    // Randomizer state (Mode A)
+    in-out property <bool> rand-active: false;
+    in-out property <bool> chk-nails: true;
+    in-out property <bool> chk-orient: true;
+    in-out property <bool> chk-expression: false;
+    in-out property <bool> chk-outfit: false;
+    in-out property <bool> chk-legwear: false;
+    in-out property <bool> chk-environment: false;
+    in-out property <bool> chk-atmosphere: false;
+    in-out property <bool> chk-pose: false;
+    in-out property <bool> chk-lighting: false;
+    in-out property <bool> chk-camera: false;
+    in-out property <bool> chk-rare: false;
+
+    // Mode B options
+    in-out property <bool> chk-curated: false;
+    in-out property <bool> chk-auto-b: true;
+
+    // Running state
+    in-out property <bool> is-running: false;
+    in-out property <bool> key-visible: false;
+
+    // ─── Callbacks (handled in Rust) ───
+    callback start-loop();
+    callback stop-loop();
+    callback single-generate();
+    callback toggle-randomizer();
+    callback gen-preview-b();
+    callback browse-folder();
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 8px;
+
+        // ── Header ──
+        HorizontalBox {
+            alignment: space-between;
+            Text {
+                text: "⚡ xAI Imagine Batch Generator v1";
+                font-size: 18px;
+                font-weight: 700;
+                color: white;
+            }
+            Rectangle {
+                background: Theme.surface;
+                border-color: Theme.border;
+                border-width: 1px;
+                border-radius: 4px;
+                width: 120px;
+                height: 26px;
+                Text {
+                    text: root.status-text;
+                    color: root.status-color;
+                    font-size: 11px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // ── API Key ──
+        GroupBox {
+            title: "API Key";
+            HorizontalBox {
+                spacing: 8px;
+                LineEdit {
+                    text <=> root.api-key;
+                    placeholder-text: "xai-xxxxxxxxxxxxxxxxxxxxxxxx";
+                    input-type: root.key-visible ? InputType.text : InputType.password;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: root.key-visible ? "🔒" : "👁";
+                    max-width: 40px;
+                    clicked => {
+                        root.key-visible = !root.key-visible;
+                    }
+                }
+            }
+        }
+
+        // ── Mode selector ──
+        HorizontalBox {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: "Modo:";
+                color: Theme.text-dim;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            ComboBox {
+                model: ["A — Prompt manual + randomizer", "B — Prompt auto-generado (pools)"];
+                current-index <=> root.current-mode;
+                min-width: 300px;
+            }
+        }
+
+        // ── MODE A: Manual prompt + randomizer ──
+        if root.current-mode == 0 : VerticalBox {
+            spacing: 6px;
+
+            GroupBox {
+                title: "Prompt (base)";
+                TextEdit {
+                    text <=> root.prompt-base;
+                    min-height: 80px;
+                    max-height: 120px;
+                }
+            }
+
+            GroupBox {
+                title: "🎲 Randomizer (Mode A)";
+
+                VerticalBox {
+                    spacing: 6px;
+
+                    // Toggle button
+                    HorizontalBox {
+                        Button {
+                            text: root.rand-active ? "🎲  Aleatorio: ON" : "🎲  Aleatorio: OFF";
+                            min-height: 32px;
+                            clicked => { root.toggle-randomizer(); }
+                        }
+                    }
+
+                    // Row 1: Replace operations
+                    HorizontalBox {
+                        spacing: 12px;
+                        Text { text: "Reemplazar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
+                        CheckBox { text: "Uñas/garras"; checked <=> root.chk-nails; enabled: root.rand-active; }
+                        CheckBox { text: "Orientación"; checked <=> root.chk-orient; enabled: root.rand-active; }
+                        CheckBox { text: "Expresión"; checked <=> root.chk-expression; enabled: root.rand-active; }
+                    }
+
+                    // Row 2: Inject operations
+                    HorizontalBox {
+                        spacing: 12px;
+                        Text { text: "Inyectar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
+                        CheckBox { text: "Ropa"; checked <=> root.chk-outfit; enabled: root.rand-active; }
+                        CheckBox { text: "Medias"; checked <=> root.chk-legwear; enabled: root.rand-active; }
+                        CheckBox { text: "Escenario"; checked <=> root.chk-environment; enabled: root.rand-active; }
+                        CheckBox { text: "Atmósfera"; checked <=> root.chk-atmosphere; enabled: root.rand-active; }
+                    }
+
+                    // Row 3: More inject
+                    HorizontalBox {
+                        spacing: 12px;
+                        Text { text: "                "; font-size: 11px; }
+                        CheckBox { text: "Pose"; checked <=> root.chk-pose; enabled: root.rand-active; }
+                        CheckBox { text: "Iluminación"; checked <=> root.chk-lighting; enabled: root.rand-active; }
+                        CheckBox { text: "Cámara"; checked <=> root.chk-camera; enabled: root.rand-active; }
+                        CheckBox { text: "Detalles raros"; checked <=> root.chk-rare; enabled: root.rand-active; }
+                    }
+                }
+            }
+        }
+
+        // ── MODE B: Auto-generated prompt ──
+        if root.current-mode == 1 : GroupBox {
+            title: "🎰 Auto-Generador (Mode B)";
+
+            VerticalBox {
+                spacing: 8px;
+
+                HorizontalBox {
+                    spacing: 12px;
+                    Text { text: "Tema:"; color: Theme.text-dim; vertical-alignment: center; }
+                    ComboBox {
+                        model: root.theme-list;
+                        current-index <=> root.theme-index;
+                        min-width: 200px;
+                    }
+                    CheckBox { text: "Combos curados"; checked <=> root.chk-curated; }
+                }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    Button {
+                        text: "🎰  Generar nuevo prompt";
+                        min-height: 32px;
+                        clicked => { root.gen-preview-b(); }
+                    }
+                    CheckBox { text: "Auto en loop"; checked <=> root.chk-auto-b; }
+                }
+            }
+        }
+
+        // ── Preview (word-wrap fixed: TextEdit read-only) ──
+        GroupBox {
+            title: "Preview del prompt";
+            TextEdit {
+                text <=> root.preview-text;
+                read-only: true;
+                min-height: 70px;
+                max-height: 100px;
+                wrap: word-wrap;
+            }
+        }
+
+        // ── Configuration ──
+        GroupBox {
+            title: "Configuración";
+
+            VerticalBox {
+                spacing: 8px;
+
+                HorizontalBox {
+                    spacing: 16px;
+                    Text { text: "Modelo:"; color: Theme.text-dim; vertical-alignment: center; }
+                    ComboBox {
+                        model: root.model-list;
+                        current-index <=> root.model-index;
+                        min-width: 200px;
+                    }
+                    Text { text: "Intervalo:"; color: Theme.text-dim; vertical-alignment: center; }
+                    SpinBox {
+                        value <=> root.interval-secs;
+                        minimum: 10;
+                        maximum: 600;
+                    }
+                    Text { text: "seg"; color: Theme.text-dim; vertical-alignment: center; }
+                }
+
+                HorizontalBox {
+                    spacing: 8px;
+                    Text { text: "Carpeta:"; color: Theme.text-dim; vertical-alignment: center; }
+                    LineEdit {
+                        text <=> root.output-folder;
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: "📂";
+                        max-width: 40px;
+                        clicked => { root.browse-folder(); }
+                    }
+                }
+            }
+        }
+
+        // ── Control buttons ──
+        HorizontalBox {
+            spacing: 12px;
+            Button {
+                text: "▶  Iniciar";
+                enabled: !root.is-running;
+                min-height: 40px;
+                horizontal-stretch: 1;
+                clicked => { root.start-loop(); }
+            }
+            Button {
+                text: "■  Detener";
+                enabled: root.is-running;
+                min-height: 40px;
+                horizontal-stretch: 1;
+                clicked => { root.stop-loop(); }
+            }
+            Button {
+                text: "⚡ Generar 1";
+                enabled: !root.is-running;
+                min-height: 40px;
+                horizontal-stretch: 1;
+                clicked => { root.single-generate(); }
+            }
+        }
+
+        // ── Progress ──
+        HorizontalBox {
+            spacing: 12px;
+            ProgressIndicator {
+                progress: root.progress-indeterminate ? -1 : root.progress-value;
+                horizontal-stretch: 3;
+                min-height: 16px;
+            }
+            Text {
+                text: root.countdown-text;
+                color: Theme.accent;
+                font-size: 16px;
+                font-weight: 700;
+                min-width: 60px;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.generation-count;
+                color: Theme.accent;
+                font-size: 24px;
+                font-weight: 700;
+                min-width: 50px;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "imgs";
+                color: Theme.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        // ── Log (debug) ──
+        GroupBox {
+            title: "Log";
+            TextEdit {
+                text <=> root.log-text;
+                read-only: true;
+                min-height: 100px;
+                max-height: 140px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
