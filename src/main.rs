@@ -23,6 +23,15 @@ struct AppState {
 }
 
 fn main() {
+    // On macOS, prefer femtovg backend to work around click issues on Tahoe+.
+    // Only sets the hint if the user hasn't already overridden via env var.
+    #[cfg(target_os = "macos")]
+    {
+        if std::env::var("SLINT_BACKEND").is_err() {
+            std::env::set_var("SLINT_BACKEND", "winit-femtovg");
+        }
+    }
+
     let app = MainWindow::new().unwrap();
 
     // Set default output folder
