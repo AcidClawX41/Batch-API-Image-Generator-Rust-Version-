@@ -193,32 +193,34 @@ export component MainWindow inherits Window {
 
                         // Row 1: Replace operations
                         HorizontalBox {
-                            spacing: 10px;
-                            Text { text: "Reemplazar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; min-width: 72px; }
-                            CheckBox { text: "Uñas"; checked <=> root.chk-nails; enabled: root.rand-active; }
-                            CheckBox { text: "Orientación"; checked <=> root.chk-orient; enabled: root.rand-active; }
-                            CheckBox { text: "Expresión"; checked <=> root.chk-expression; enabled: root.rand-active; }
+                            spacing: 0px;
+                            alignment: start;
+                            Text { text: "Reemplazar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
+                            CheckBox { text: "Uñas"; checked <=> root.chk-nails; enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Orientación"; checked <=> root.chk-orient; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Expresión"; checked <=> root.chk-expression; enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 2: Inject operations
                         HorizontalBox {
-                            spacing: 10px;
-                            Text { text: "Inyectar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; min-width: 72px; }
-                            CheckBox { text: "Ropa"; checked <=> root.chk-outfit; enabled: root.rand-active; }
-                            CheckBox { text: "Medias"; checked <=> root.chk-legwear; enabled: root.rand-active; }
-                            CheckBox { text: "Escenario"; checked <=> root.chk-environment; enabled: root.rand-active; }
-                            CheckBox { text: "Atmósfera"; checked <=> root.chk-atmosphere; enabled: root.rand-active; }
+                            spacing: 0px;
+                            alignment: start;
+                            Text { text: "Inyectar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
+                            CheckBox { text: "Ropa"; checked <=> root.chk-outfit; enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Medias"; checked <=> root.chk-legwear; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Escenario"; checked <=> root.chk-environment; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Atmósfera"; checked <=> root.chk-atmosphere; enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 3: More inject
                         HorizontalBox {
-                            spacing: 10px;
-                            // Spacer to align with rows above
-                            Rectangle { width: 72px; }
-                            CheckBox { text: "Pose"; checked <=> root.chk-pose; enabled: root.rand-active; }
-                            CheckBox { text: "Luz"; checked <=> root.chk-lighting; enabled: root.rand-active; }
-                            CheckBox { text: "Cámara"; checked <=> root.chk-camera; enabled: root.rand-active; }
-                            CheckBox { text: "Raros"; checked <=> root.chk-rare; enabled: root.rand-active; }
+                            spacing: 0px;
+                            alignment: start;
+                            Rectangle { width: 80px; }
+                            CheckBox { text: "Pose"; checked <=> root.chk-pose; enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Luz"; checked <=> root.chk-lighting; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Cámara"; checked <=> root.chk-camera; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Raros"; checked <=> root.chk-rare; enabled: root.rand-active; width: 140px; }
                         }
                     }
                 }
