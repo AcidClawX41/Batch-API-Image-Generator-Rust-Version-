@@ -74,6 +74,18 @@ export component MainWindow inherits Window {
     in-out property <bool> chk-camera: false;
     in-out property <bool> chk-rare: false;
 
+    // New randomizer pools (Mode A)
+    in-out property <bool> chk-accessories: false;
+    in-out property <bool> chk-makeup: false;
+    in-out property <bool> chk-body-type: false;
+    in-out property <bool> chk-age-vibe: false;
+    in-out property <bool> chk-color-palette: false;
+    in-out property <bool> chk-time-of-day: false;
+    in-out property <bool> chk-weather: false;
+    in-out property <bool> chk-bg-props: false;
+    in-out property <bool> chk-material: false;
+    in-out property <bool> chk-motion: false;
+
     // Mode B options
     in-out property <bool> chk-curated: false;
     in-out property <bool> chk-auto-b: true;
@@ -220,7 +232,38 @@ export component MainWindow inherits Window {
                             CheckBox { text: "Pose"; checked <=> root.chk-pose; enabled: root.rand-active; width: 120px; }
                             CheckBox { text: "Luz"; checked <=> root.chk-lighting; enabled: root.rand-active; width: 140px; }
                             CheckBox { text: "Cámara"; checked <=> root.chk-camera; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Detalles Raros"; checked <=> root.chk-rare; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Raros"; checked <=> root.chk-rare; enabled: root.rand-active; width: 140px; }
+                        }
+
+                        // Row 4: Character extras
+                        HorizontalBox {
+                            spacing: 0px;
+                            alignment: start;
+                            Text { text: "Personaje:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
+                            CheckBox { text: "Accesorios"; checked <=> root.chk-accessories; enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Maquillaje"; checked <=> root.chk-makeup; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Silueta"; checked <=> root.chk-body-type; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Edad"; checked <=> root.chk-age-vibe; enabled: root.rand-active; width: 140px; }
+                        }
+
+                        // Row 5: Scene extras
+                        HorizontalBox {
+                            spacing: 0px;
+                            alignment: start;
+                            Text { text: "Escena:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
+                            CheckBox { text: "Paleta color"; checked <=> root.chk-color-palette; enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Hora del día"; checked <=> root.chk-time-of-day; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Clima"; checked <=> root.chk-weather; enabled: root.rand-active; width: 140px; }
+                        }
+
+                        // Row 6: Detail extras
+                        HorizontalBox {
+                            spacing: 0px;
+                            alignment: start;
+                            Rectangle { width: 80px; }
+                            CheckBox { text: "Props fondo"; checked <=> root.chk-bg-props; enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Material"; checked <=> root.chk-material; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Movimiento"; checked <=> root.chk-motion; enabled: root.rand-active; width: 140px; }
                         }
                     }
                 }

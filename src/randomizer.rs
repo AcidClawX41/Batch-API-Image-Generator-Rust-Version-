@@ -48,6 +48,17 @@ pub struct ModifyOptions {
     pub do_lighting: bool,
     pub do_camera: bool,
     pub do_rare: bool,
+    // New pools
+    pub do_accessories: bool,
+    pub do_makeup: bool,
+    pub do_body_type: bool,
+    pub do_age_vibe: bool,
+    pub do_color_palette: bool,
+    pub do_time_of_day: bool,
+    pub do_weather: bool,
+    pub do_bg_props: bool,
+    pub do_material: bool,
+    pub do_motion: bool,
 }
 
 impl Default for ModifyOptions {
@@ -57,6 +68,10 @@ impl Default for ModifyOptions {
             do_outfit: false, do_legwear: false, do_environment: false,
             do_atmosphere: false, do_pose: false, do_lighting: false,
             do_camera: false, do_rare: false,
+            do_accessories: false, do_makeup: false, do_body_type: false,
+            do_age_vibe: false, do_color_palette: false, do_time_of_day: false,
+            do_weather: false, do_bg_props: false, do_material: false,
+            do_motion: false,
         }
     }
 }
@@ -156,6 +171,56 @@ pub fn modify_prompt(prompt: &str, opts: &ModifyOptions) -> String {
         ));
     }
 
+    // INJECT: Accessories
+    if opts.do_accessories {
+        injections.push(format!("Wearing {}.", pick(pools::ACCESSORIES)));
+    }
+
+    // INJECT: Makeup
+    if opts.do_makeup {
+        injections.push(format!("Beauty detail: {}.", pick(pools::MAKEUP_DETAILS)));
+    }
+
+    // INJECT: Body type
+    if opts.do_body_type {
+        injections.push(format!("She has a {}.", pick(pools::BODY_TYPES)));
+    }
+
+    // INJECT: Age vibe
+    if opts.do_age_vibe {
+        injections.push(format!("Character is an {}.", pick(pools::AGE_VIBES)));
+    }
+
+    // INJECT: Color palette
+    if opts.do_color_palette {
+        injections.push(format!("Color grading: {}.", pick(pools::COLOR_PALETTES)));
+    }
+
+    // INJECT: Time of day
+    if opts.do_time_of_day {
+        injections.push(format!("The scene takes place {}.", pick(pools::TIMES_OF_DAY)));
+    }
+
+    // INJECT: Weather
+    if opts.do_weather {
+        injections.push(format!("Weather: {}.", pick(pools::WEATHER_CONDITIONS)));
+    }
+
+    // INJECT: Background props
+    if opts.do_bg_props {
+        injections.push(format!("Background elements: {}.", pick(pools::BACKGROUND_PROPS)));
+    }
+
+    // INJECT: Material emphasis
+    if opts.do_material {
+        injections.push(format!("Texture emphasis: {}.", pick(pools::MATERIAL_EMPHASIS)));
+    }
+
+    // INJECT: Motion
+    if opts.do_motion {
+        injections.push(format!("Motion detail: {}.", pick(pools::MOTION_DETAILS)));
+    }
+
     // INJECT: Rare
     if opts.do_rare {
         if let Some(r) = maybe(pools::RARE_DETAILS, 0.5) {
@@ -188,6 +253,14 @@ pub fn generate_full_prompt(preset_index: usize, use_curated: bool) -> String {
     parts.push(format!("{},", preset.base));
     parts.push(format!("{}.", pick(pools::ART_STYLES)));
 
+    // Age / presence anchor
+    parts.push(format!("Character is an {}.", pick(pools::AGE_VIBES)));
+
+    // Body type
+    if let Some(bt) = maybe(pools::BODY_TYPES, 0.6) {
+        parts.push(format!("She has a {}.", bt));
+    }
+
     // Character
     parts.push(format!(
         "The character has {}, {}, and {}.",
@@ -195,15 +268,26 @@ pub fn generate_full_prompt(preset_index: usize, use_curated: bool) -> String {
     ));
     parts.push(format!("She has {}.", pick(expr_pool)));
 
-    // Skin
+    // Skin + makeup
     let skin = pick_n(pools::SKIN_DETAILS, 2);
     parts.push(format!("{}.", skin.join(", ")));
+    if let Some(mk) = maybe(pools::MAKEUP_DETAILS, 0.55) {
+        parts.push(format!("Beauty detail: {}.", mk));
+    }
 
-    // Outfit
+    // Accessories
+    if let Some(acc) = maybe(pools::ACCESSORIES, 0.5) {
+        parts.push(format!("Wearing {}.", acc));
+    }
+
+    // Outfit + material
     parts.push(format!(
         "She is wearing {}, {}, {}.",
         pick(outfit_pool), pick(pools::LEGWEAR), pick(pools::FABRIC_DETAILS)
     ));
+    if let Some(mat) = maybe(pools::MATERIAL_EMPHASIS, 0.4) {
+        parts.push(format!("Texture emphasis: {}.", mat));
+    }
 
     // Nails
     parts.push(format!(
@@ -212,11 +296,14 @@ pub fn generate_full_prompt(preset_index: usize, use_curated: bool) -> String {
     ));
     parts.push(format!("Pose detail: {}.", pick(pools::HAND_POSES)));
 
-    // Pose
+    // Pose + motion
     parts.push(format!(
         "She is {}, {}.",
         pick(pools::POSES), pick(pools::ACTION_DETAILS)
     ));
+    if let Some(mot) = maybe(pools::MOTION_DETAILS, 0.45) {
+        parts.push(format!("Motion detail: {}.", mot));
+    }
 
     // Environment
     if use_curated && !pools::CURATED_COMBOS.is_empty() {
@@ -234,6 +321,26 @@ pub fn generate_full_prompt(preset_index: usize, use_curated: bool) -> String {
         ));
         parts.push(format!("Lighting: {}.", pick(pools::LIGHTING_MOODS)));
         parts.push(format!("{}, {}.", pick(pools::CAMERA_ANGLES), pick(pools::LENS_STYLES)));
+    }
+
+    // Time of day
+    if let Some(tod) = maybe(pools::TIMES_OF_DAY, 0.5) {
+        parts.push(format!("The scene takes place {}.", tod));
+    }
+
+    // Weather
+    if let Some(wth) = maybe(pools::WEATHER_CONDITIONS, 0.4) {
+        parts.push(format!("Weather: {}.", wth));
+    }
+
+    // Background props
+    if let Some(bp) = maybe(pools::BACKGROUND_PROPS, 0.45) {
+        parts.push(format!("Background elements: {}.", bp));
+    }
+
+    // Color palette
+    if let Some(cp) = maybe(pools::COLOR_PALETTES, 0.5) {
+        parts.push(format!("Color grading: {}.", cp));
     }
 
     // Composition

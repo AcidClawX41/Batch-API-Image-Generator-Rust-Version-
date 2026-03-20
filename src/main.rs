@@ -94,6 +94,16 @@ fn main() {
                         do_lighting: app.get_chk_lighting(),
                         do_camera: app.get_chk_camera(),
                         do_rare: app.get_chk_rare(),
+                        do_accessories: app.get_chk_accessories(),
+                        do_makeup: app.get_chk_makeup(),
+                        do_body_type: app.get_chk_body_type(),
+                        do_age_vibe: app.get_chk_age_vibe(),
+                        do_color_palette: app.get_chk_color_palette(),
+                        do_time_of_day: app.get_chk_time_of_day(),
+                        do_weather: app.get_chk_weather(),
+                        do_bg_props: app.get_chk_bg_props(),
+                        do_material: app.get_chk_material(),
+                        do_motion: app.get_chk_motion(),
                     };
                     let result = randomizer::modify_prompt(&base, &opts);
                     app.set_preview_text(result.clone().into());
@@ -258,6 +268,16 @@ fn main() {
                         do_lighting: app.get_chk_lighting(),
                         do_camera: app.get_chk_camera(),
                         do_rare: app.get_chk_rare(),
+                        do_accessories: app.get_chk_accessories(),
+                        do_makeup: app.get_chk_makeup(),
+                        do_body_type: app.get_chk_body_type(),
+                        do_age_vibe: app.get_chk_age_vibe(),
+                        do_color_palette: app.get_chk_color_palette(),
+                        do_time_of_day: app.get_chk_time_of_day(),
+                        do_weather: app.get_chk_weather(),
+                        do_bg_props: app.get_chk_bg_props(),
+                        do_material: app.get_chk_material(),
+                        do_motion: app.get_chk_motion(),
                     };
                     let preview = randomizer::modify_prompt(&base, &opts);
                     app.set_preview_text(preview.into());

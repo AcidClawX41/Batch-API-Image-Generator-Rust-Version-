@@ -1,5 +1,5 @@
 //! pools.rs — Randomizable content pools and theme presets.
-//! Add, remove, or edit entries freely.
+
 
 // ─── CHARACTER ───
 
@@ -49,6 +49,17 @@ pub const NAIL_COLORS: &[&str] = &[
     "dark purple", "midnight blue", "emerald green", "glossy white",
     "blood red", "rose gold", "chrome silver", "neon pink",
     "dark cherry", "matte black", "pearl white", "fiery orange",
+    "holographic rainbow", "iridescent opal shimmer", "galaxy nebula purple",
+    "neon cyan glitch", "electric venom green", "toxic slime lime",
+    "unicorn horn pastel", "glow-in-the-dark radioactive", "psychedelic swirl magenta",
+    "mermaid scale teal", "diamond dust sparkle", "lava crackle orange",
+    "cyberpunk chrome magenta", "frosted arctic blue", "pearlescent sunset gradient",
+    "witchy black glitter", "alien iridescent silver", "blood moon crimson crackle",
+    "sparkling starfield navy", "matte holographic violet", "neon coral poison",
+    "rainbow chrome flip", "glowing plasma pink", "glittery bubblegum galaxy",
+    "metallic toxic yellow", "pearlized aurora borealis", "deep sea bioluminescent",
+    "flamingo chrome pink", "void black with starlight", "candy apple holographic",
+    "electric lavender shock", "sunset gradient chrome", "zombie slime green glow",
 ];
 
 pub const NAIL_STYLES: &[&str] = &[
@@ -57,11 +68,22 @@ pub const NAIL_STYLES: &[&str] = &[
     "glass-like glossy nails", "mirror-finish chrome nails",
     "subtle pearl-coated nails", "slightly claw-like nails",
     "salon-perfect manicure",
+    "long coffin nails", "extra long dagger nails", "extreme stiletto talons",
+    "ballerina shaped nails", "square blocky nails", "micro short square nails",
+    "acrylic nails with rhinestones", "3D jewel-encrusted nails", "spiked gothic nails",
+    "cracked and broken acrylics", "dripping wet-look nails", "glitter bomb overload",
+    "holographic chrome tips", "matte black with gold inlays", "pearl and chain nails",
+    "talon-like predator nails", "heart-shaped tips", "butterfly wing nails",
+    "neon glowing edge nails", "french tip but reversed", "rainbow gradient coffin",
+    "embedded crystal shards", "velvet matte texture", "wet glossy latex nails",
+    "claw extension extreme", "festival glitter explosion", "demon horn nails",
 ];
 
 pub const HAND_POSES: &[&str] = &[
     "elegant fingers lightly touching the face",
     "one hand pulling at the collar",
+    "Paw Pose",
+    "Claws Scratching Things",
     "fingers brushing through the hair",
     "one hand resting on the wall",
     "hands clasped behind the back",
@@ -85,6 +107,31 @@ pub const OUTFITS: &[&str] = &[
     "a shrine maiden inspired outfit",
     "a refined winter coat outfit",
     "a sporty jacket with short skirt",
+    "a classic french maid outfit with white frills",
+    "a sexy black latex catsuit with zippers",
+    "a bunny girl leotard with fishnet stockings",
+    "a pink lolita dress with huge bows",
+    "a micro bikini armor fantasy set",
+    "a transparent sheer babydoll nightie",
+    "a cyberpunk neon bodysuit with glowing lines",
+    "a nurse uniform with extreme short skirt",
+    "a cheerleader outfit with pom-poms",
+    "a shibari-inspired rope harness dress",
+    "a wet white shirt and black panties combo",
+    "a gothic lolita with layered petticoats",
+    "a demon queen corset and thigh-high boots",
+    "a school swimsuit with see-through fabric",
+    "a leather dominatrix corset set",
+    "a magical girl transformation outfit",
+    "a kimono with exposed shoulders and slits",
+    "a succubus lingerie with bat wings",
+    "a ripped punk rock outfit with chains",
+    "a shiny PVC police uniform",
+    "a virgin killer sweater with nothing underneath",
+    "a steampunk corset and goggles set",
+    "a catgirl neko maid dress with bell collar",
+    "a holographic future idol stage costume",
+    "a bondage leather harness and micro skirt",
 ];
 
 pub const LEGWEAR: &[&str] = &[
@@ -92,6 +139,19 @@ pub const LEGWEAR: &[&str] = &[
     "white thigh-high socks", "patterned stockings",
     "black knee-high socks", "bare legs",
     "ribbed tights", "lace-trim thigh-highs",
+    "fishnet thigh-high stockings", "glossy black latex thigh-highs",
+    "white garter belt stockings", "rainbow striped over-knee socks",
+    "ripped and torn fishnets", "sheer seamed pantyhose",
+    "neon pink glowing thigh-highs", "cyberpunk LED-lined stockings",
+    "bunny girl white fishnets with pom-poms", "french maid lace thigh-highs with bows",
+    "wet-look shiny pantyhose", "black thigh-highs with red heart garters",
+    "suspender belt and sheer stockings", "striped knee-high school socks",
+    "transparent vinyl leg covers", "sparkly glitter bomb tights",
+    "pastel rainbow thigh-high socks", "red demon latex legwear",
+    "classic schoolgirl white knee-highs", "succubus chain fishnets",
+    "armored strap thigh-highs", "dripping wet glossy stockings",
+    "velvet matte black thigh-highs", "holographic chrome tights",
+    "heart-patterned garter stockings",
 ];
 
 pub const FABRIC_DETAILS: &[&str] = &[
@@ -112,6 +172,31 @@ pub const POSES: &[&str] = &[
     "standing in the wind with hair flowing",
     "holding still in a quiet intimate moment",
     "mid-step as if caught in motion",
+    "seductive hand on hip with arched back",
+    "peace sign with playful wink and tongue out",
+    "lying on back with legs playfully in the air",
+    "dynamic magical girl transformation pose",
+    "leaning forward with cleavage emphasis",
+    "sitting backwards on a chair teasingly",
+    "low angle looking up with sultry gaze",
+    "arms raised in idol victory pose",
+    "kneeling with hands on thighs and back arched",
+    "spinning with skirt flare and hair whip",
+    "floating mid-air in zero gravity pose",
+    "teasingly lifting skirt with one hand",
+    "yoga flexible bridge pose on toes",
+    "leaning over with hands on knees seductive",
+    "dramatic hair flip mid-turn",
+    "crouching like a catgirl ready to pounce",
+    "lying on side with leg kick and wink",
+    "standing with one leg raised high",
+    "back view with over-shoulder seductive glance",
+    "hands behind head with chest forward",
+    "jumping with twintails flying and skirt up",
+    "sitting on floor hugging knees shyly",
+    "dynamic fighting stance with glowing aura",
+    "reclining on elbows with legs crossed",
+    "ahegao-ready arched back pose with tongue",
 ];
 
 pub const ACTION_DETAILS: &[&str] = &[
@@ -202,6 +287,7 @@ pub const COMPOSITION_DETAILS: &[&str] = &[
 
 pub const ART_STYLES: &[&str] = &[
     "anime-style illustration with realistic rendering",
+    "realistic anime-style illustration",
     "high-end semi-realistic anime art",
     "cinematic anime realism",
     "polished character illustration",
@@ -215,6 +301,108 @@ pub const QUALITY_TAGS: &[&str] = &[
     "beautiful color grading", "highly detailed eyes",
     "carefully rendered hair strands", "refined shading",
     "professional composition",
+];
+
+// ─── ACCESSORIES ───
+
+pub const ACCESSORIES: &[&str] = &[
+    "a black choker", "a silver chain necklace", "a delicate lace choker",
+    "small hoop earrings", "long dangling earrings", "a pearl necklace",
+    "thin-framed glasses", "stylish sunglasses", "a ribbon hair clip",
+    "a flower hair ornament", "a jeweled hairpin", "a leather bracelet",
+    "lace gloves", "arm warmers", "a decorative waist belt",
+    "a velvet ribbon tied around the wrist", "a pendant with a gemstone",
+    "fingerless leather gloves", "a beret", "a silk scarf around the neck",
+];
+
+// ─── MAKEUP / BEAUTY ───
+
+pub const MAKEUP_DETAILS: &[&str] = &[
+    "soft eyeliner", "smoky eye makeup", "winged eyeliner",
+    "glittery eye shadow", "subtle glossy lipstick", "deep red lipstick",
+    "soft pink lipstick", "light mascara", "defined lashes",
+    "a soft blush gradient", "a polished beauty look",
+    "slightly smudged eyeliner", "delicate lip gloss",
+    "bold dramatic eye makeup", "natural no-makeup look",
+];
+
+// ─── BODY TYPE / SILHOUETTE ───
+
+pub const BODY_TYPES: &[&str] = &[
+    "slender build", "curvy silhouette", "athletic build",
+    "graceful figure", "soft elegant proportions",
+    "lean toned physique", "mature feminine silhouette",
+    "thin build", "weak body",
+];
+
+// ─── AGE / PRESENCE ───
+
+pub const AGE_VIBES: &[&str] = &[
+    "adult woman", "young adult woman", "mature-looking anime woman",
+    "confident adult character", "elegant grown woman",
+    "youthful girl", "loli girl", "college-age woman",
+    "early-twenties woman",
+];
+
+// ─── COLOR PALETTE ───
+
+pub const COLOR_PALETTES: &[&str] = &[
+    "warm red and gold palette", "cool blue and silver palette",
+    "black and crimson palette", "soft pastel palette",
+    "neon magenta and cyan palette", "muted cinematic palette",
+    "deep violet and blue palette", "emerald and black palette",
+    "sepia and amber tones", "monochrome with a single accent color",
+    "warm autumn palette", "icy winter palette",
+];
+
+// ─── TIME OF DAY ───
+
+pub const TIMES_OF_DAY: &[&str] = &[
+    "at sunrise", "in the early morning", "at golden hour",
+    "at sunset", "at blue hour", "late at night",
+    "under moonlight", "before dawn", "at high noon",
+    "during twilight",
+];
+
+// ─── WEATHER / CLIMATE ───
+
+pub const WEATHER_CONDITIONS: &[&str] = &[
+    "during light rain", "during heavy rain", "on a windy evening",
+    "in humid summer air", "on a cold winter night", "in spring breeze",
+    "in soft snowfall", "under stormy clouds", "in dense fog",
+    "under a clear starry sky", "with cherry blossoms drifting in the air",
+];
+
+// ─── BACKGROUND PROPS ───
+
+pub const BACKGROUND_PROPS: &[&str] = &[
+    "glowing city signs", "paper lanterns", "bookshelves",
+    "rain-soaked pavement", "flower petals scattered on the ground",
+    "velvet curtains", "ornate mirrors", "candles in the background",
+    "metal railings", "holographic displays",
+    "train windows with reflections", "shoji screens",
+    "neon vending machines", "stacked wooden crates",
+    "a grand staircase in the background",
+];
+
+// ─── MATERIAL / TEXTURE ───
+
+pub const MATERIAL_EMPHASIS: &[&str] = &[
+    "silk textures", "velvet textures", "leather textures",
+    "latex shine", "satin sheen", "matte fabric contrast",
+    "metallic surfaces", "glass reflections", "wet surface reflections",
+    "embroidered fabric details", "lace overlay textures",
+    "denim texture details", "translucent fabric layers",
+];
+
+// ─── MOTION DETAILS ───
+
+pub const MOTION_DETAILS: &[&str] = &[
+    "hair flowing in the wind", "loose strands crossing the face",
+    "fabric fluttering softly", "a ribbon moving in the breeze",
+    "subtle motion in the skirt hem", "wind pushing the coat backward",
+    "floating strands of hair catching the light",
+    "earrings swaying gently", "scarf trailing behind her",
 ];
 
 // ─── RARE DETAILS ───
