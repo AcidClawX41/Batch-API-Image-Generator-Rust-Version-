@@ -19,12 +19,14 @@ pub const HAIR_STYLES: &[&str] = &[
     "twin tails", "loose wavy hair", "curly hair", "braided hair",
     "single braid over the shoulder", "double braids", "ahoge",
     "windswept hair", "wet hair strands framing the face",
+    "short hair with a bang", "short hair with a bang and a wig",
 ];
 
 pub const EYE_COLORS: &[&str] = &[
     "striking blue eyes", "emerald green eyes", "golden amber eyes",
     "violet eyes", "ruby red eyes", "pink eyes", "silver-gray eyes",
     "heterochromia eyes", "deep brown eyes", "icy cyan eyes",
+    "neon pink eyes", "neon green eyes", "neon blue eyes",
 ];
 
 pub const EXPRESSIONS: &[&str] = &[

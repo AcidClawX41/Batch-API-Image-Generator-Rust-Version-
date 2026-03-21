@@ -1,5 +1,5 @@
 #![windows_subsystem = "windows"]
-//! main.rs — xAI Imagine Batch Generator v1 (Rust + Slint)
+//! main.rs — Batch Image Generator v1 (Rust + Slint)
 //!
 //! Entry point. Wires up the Slint UI with the async API client,
 //! randomizer, and countdown timer logic.
@@ -8,6 +8,7 @@ mod api;
 mod pools;
 mod randomizer;
 
+use api::ImageProvider;
 use randomizer::ModifyOptions;
 use slint::{Timer, TimerMode};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,46 @@ struct AppState {
     seconds_left: i32,
     interval: i32,
 }
+
+struct ModelCatalogEntry {
+    provider: ImageProvider,
+    model: &'static str,
+}
+
+const MODEL_CATALOG: &[ModelCatalogEntry] = &[
+    ModelCatalogEntry {
+        provider: ImageProvider::Xai,
+        model: "grok-imagine-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::Xai,
+        model: "grok-imagine-image-pro",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::Google,
+        model: "gemini-2.5-flash-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::Google,
+        model: "gemini-3-pro-image-preview",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::OpenAi,
+        model: "gpt-image-1.5",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::OpenAi,
+        model: "gpt-image-1",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::OpenAi,
+        model: "gpt-image-1-mini",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::OpenAi,
+        model: "dall-e-3",
+    },
+];
 
 fn main() {
     // On macOS, prefer femtovg backend to work around click issues on Tahoe+.
@@ -36,7 +77,7 @@ fn main() {
 
     // Set default output folder
     if let Some(home) = dirs::home_dir() {
-        let default_folder = home.join("xai_images").to_string_lossy().to_string();
+        let default_folder = home.join("batch_images").to_string_lossy().to_string();
         app.set_output_folder(default_folder.into());
     }
 
@@ -67,7 +108,7 @@ fn main() {
                     app.set_log_text(format!("{}{}", current, line).into());
                 }
             })
-            .ok();
+                .ok();
         }
     };
 
@@ -146,8 +187,9 @@ fn main() {
             let prompt = resolve();
             let api_key = app.get_api_key().to_string();
             let model_idx = app.get_model_index() as usize;
-            let models = ["grok-imagine-image", "grok-imagine-image-pro"];
-            let model = models.get(model_idx).unwrap_or(&models[0]).to_string();
+            let selected_model = MODEL_CATALOG.get(model_idx).unwrap_or(&MODEL_CATALOG[0]);
+            let provider = selected_model.provider;
+            let model = selected_model.model.to_string();
             let output_dir = app.get_output_folder().to_string();
 
             app.set_progress_indeterminate(true);
@@ -158,6 +200,7 @@ fn main() {
             let state2 = state.clone();
 
             // ── Detailed debug log ──
+            log(&format!("Proveedor: {}", provider.display_name()), "INFO");
             log(&format!("Modelo: {}", model), "INFO");
             log(&format!("Carpeta: {}", output_dir), "INFO");
             let prompt_preview = if prompt.len() > 120 {
@@ -166,11 +209,14 @@ fn main() {
                 prompt.clone()
             };
             log(&format!("Prompt: {}", prompt_preview), "INFO");
-            log("Enviando petición a xAI API...", "INFO");
+            log(
+                &format!("Enviando petición a {} API...", provider.display_name()),
+                "INFO",
+            );
 
             rt.spawn(async move {
                 let result =
-                    api::generate_image(&api_key, &prompt, &model, &output_dir).await;
+                    api::generate_image(provider, &api_key, &prompt, &model, &output_dir).await;
 
                 slint::invoke_from_event_loop(move || {
                     if let Some(app) = app_weak2.upgrade() {
@@ -184,8 +230,8 @@ fn main() {
                                 app.set_progress_label("Completado".into());
                                 log2(
                                     &format!(
-                                        "✅ Imagen #{} guardada: {}",
-                                        count, gen.filepath
+                                        "✅ Imagen #{} guardada: {} ({})",
+                                        count, gen.filepath, gen.filename
                                     ),
                                     "OK",
                                 );
@@ -198,18 +244,13 @@ fn main() {
                                     drop(st);
                                     let mins = secs / 60;
                                     let s = secs % 60;
-                                    app.set_countdown_text(
-                                        format!("{:02}:{:02}", mins, s).into(),
-                                    );
+                                    app.set_countdown_text(format!("{:02}:{:02}", mins, s).into());
                                     app.set_progress_value(1.0);
                                     app.set_progress_label(
                                         format!("Siguiente en {}s", secs).into(),
                                     );
                                     log2(
-                                        &format!(
-                                            "⏱ Cuenta atrás: {}s hasta la siguiente.",
-                                            secs
-                                        ),
+                                        &format!("⏱ Cuenta atrás: {}s hasta la siguiente.", secs),
                                         "INFO",
                                     );
                                 }
@@ -225,19 +266,13 @@ fn main() {
                                     st.seconds_left = st.interval;
                                     let secs = st.interval;
                                     drop(st);
-                                    log2(
-                                        &format!(
-                                            "⏱ Reintentando en {}s...",
-                                            secs
-                                        ),
-                                        "WARN",
-                                    );
+                                    log2(&format!("⏱ Reintentando en {}s...", secs), "WARN");
                                 }
                             }
                         }
                     }
                 })
-                .ok();
+                    .ok();
             });
         }
     };
@@ -315,10 +350,7 @@ fn main() {
                 } else {
                     std::path::PathBuf::from(&current)
                 };
-                if let Some(folder) = rfd::FileDialog::new()
-                    .set_directory(&start)
-                    .pick_folder()
-                {
+                if let Some(folder) = rfd::FileDialog::new().set_directory(&start).pick_folder() {
                     app.set_output_folder(folder.to_string_lossy().to_string().into());
                 }
             }
@@ -390,38 +422,34 @@ fn main() {
         let state = state.clone();
         let fire = fire_generation.clone();
 
-        timer.start(
-            TimerMode::Repeated,
-            Duration::from_secs(1),
-            move || {
-                if let Some(app) = app_weak.upgrade() {
-                    let mut st = state.lock().unwrap();
-                    if !st.running {
-                        return;
-                    }
-
-                    if st.seconds_left > 0 {
-                        st.seconds_left -= 1;
-                        let secs = st.seconds_left;
-                        let total = st.interval;
-                        drop(st);
-
-                        let mins = secs / 60;
-                        let s = secs % 60;
-                        app.set_countdown_text(format!("{:02}:{:02}", mins, s).into());
-                        if total > 0 {
-                            app.set_progress_value(secs as f32 / total as f32);
-                        }
-                        app.set_progress_label(format!("Siguiente en {}s", secs).into());
-                    } else {
-                        // Countdown hit 0 — fire next generation
-                        // seconds_left will be reset in fire_generation's success callback
-                        drop(st);
-                        fire();
-                    }
+        timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
+            if let Some(app) = app_weak.upgrade() {
+                let mut st = state.lock().unwrap();
+                if !st.running {
+                    return;
                 }
-            },
-        );
+
+                if st.seconds_left > 0 {
+                    st.seconds_left -= 1;
+                    let secs = st.seconds_left;
+                    let total = st.interval;
+                    drop(st);
+
+                    let mins = secs / 60;
+                    let s = secs % 60;
+                    app.set_countdown_text(format!("{:02}:{:02}", mins, s).into());
+                    if total > 0 {
+                        app.set_progress_value(secs as f32 / total as f32);
+                    }
+                    app.set_progress_label(format!("Siguiente en {}s", secs).into());
+                } else {
+                    // Countdown hit 0 — fire next generation
+                    // seconds_left will be reset in fire_generation's success callback
+                    drop(st);
+                    fire();
+                }
+            }
+        });
         timer // keep alive
     };
 

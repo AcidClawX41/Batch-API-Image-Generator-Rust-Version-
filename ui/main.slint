@@ -1,4 +1,4 @@
-// ui/main.slint — xAI Imagine Batch Generator (Rust + Slint)
+// ui/main.slint — Batch Image Generator (Rust + Slint)
 // Responsive layout — adapts from ~600px height upward
 
 import { Button, LineEdit, ComboBox, CheckBox, SpinBox, TextEdit,
@@ -21,7 +21,7 @@ global Theme {
 }
 
 export component MainWindow inherits Window {
-    title: "xAI Imagine — Batch Generator v1 (Rust)";
+    title: "Batch Image Generator v1 (Rust)";
     min-width: 620px;
     min-height: 580px;
     preferred-width: 880px;
@@ -48,7 +48,16 @@ export component MainWindow inherits Window {
 
     // Model
     in-out property <int> model-index: 0;
-    in-out property <[string]> model-list: ["grok-imagine-image", "grok-imagine-image-pro"];
+    in-out property <[string]> model-list: [
+        "xAI — grok-imagine-image",
+        "xAI — grok-imagine-image-pro",
+        "Google — gemini-2.5-flash-image (Nano Banana)",
+        "Google — gemini-3-pro-image-preview (Nano Banana Pro)",
+        "OpenAI — gpt-image-1.5",
+        "OpenAI — gpt-image-1",
+        "OpenAI — gpt-image-1-mini",
+        "OpenAI — dall-e-3 (legacy)"
+    ];
 
     // Theme presets for Mode B
     in-out property <int> theme-index: 0;
@@ -112,7 +121,7 @@ export component MainWindow inherits Window {
             HorizontalBox {
                 alignment: space-between;
                 Text {
-                    text: "⚡ xAI Imagine Batch Generator v1";
+                    text: "⚡ Batch Image Generator v1";
                     font-size: 17px;
                     font-weight: 700;
                     color: white;
@@ -138,12 +147,12 @@ export component MainWindow inherits Window {
 
             // ── API Key ──
             GroupBox {
-                title: "API Key";
+                title: "API Key del proveedor";
                 HorizontalBox {
                     spacing: 8px;
                     LineEdit {
                         text <=> root.api-key;
-                        placeholder-text: "xai-xxxxxxxxxxxxxxxxxxxxxxxx";
+                        placeholder-text: "Pega aquí la API key del modelo seleccionado";
                         input-type: root.key-visible ? InputType.text : InputType.password;
                         horizontal-stretch: 1;
                     }
@@ -232,7 +241,7 @@ export component MainWindow inherits Window {
                             CheckBox { text: "Pose"; checked <=> root.chk-pose; enabled: root.rand-active; width: 120px; }
                             CheckBox { text: "Luz"; checked <=> root.chk-lighting; enabled: root.rand-active; width: 140px; }
                             CheckBox { text: "Cámara"; checked <=> root.chk-camera; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Raros"; checked <=> root.chk-rare; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Detalles Raros"; checked <=> root.chk-rare; enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 4: Character extras
@@ -322,7 +331,7 @@ export component MainWindow inherits Window {
                     // Row 1: Model + Interval
                     HorizontalBox {
                         spacing: 12px;
-                        Text { text: "Modelo:"; color: Theme.text-dim; vertical-alignment: center; }
+                        Text { text: "Modelo / proveedor:"; color: Theme.text-dim; vertical-alignment: center; }
                         ComboBox {
                             model: root.model-list;
                             current-index <=> root.model-index;
