@@ -8,9 +8,9 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("icons/xai_generator.ico");
-        res.set("ProductName", "Batch Image Generator");
-        res.set("FileDescription", "Batch Image Generator v1");
-        res.set("ProductVersion", "1.0.0");
+        res.set("ProductName", "AI Batch Image Generator");
+        res.set("FileDescription", "Batch Image Generator v2");
+        res.set("ProductVersion", "2.0.0");
         res.compile().unwrap();
     }
 }

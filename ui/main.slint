@@ -21,7 +21,7 @@ global Theme {
 }
 
 export component MainWindow inherits Window {
-    title: "Batch Image Generator v1 (Rust)";
+    title: "Batch Image Generator v2 (Rust)";
     min-width: 620px;
     min-height: 580px;
     preferred-width: 880px;
@@ -31,6 +31,7 @@ export component MainWindow inherits Window {
 
     // ─── Properties (bound from Rust) ───
     in-out property <string> api-key;
+    in-out property <string> wavespeed-api-key;
     in-out property <string> prompt-base;
     in-out property <string> preview-text;
     in-out property <string> log-text;
@@ -56,7 +57,23 @@ export component MainWindow inherits Window {
         "OpenAI — gpt-image-1.5",
         "OpenAI — gpt-image-1",
         "OpenAI — gpt-image-1-mini",
-        "OpenAI — dall-e-3 (legacy)"
+        "OpenAI — dall-e-3 (legacy)",
+        "WaveSpeed — Flux 2 Max",
+        "WaveSpeed — Flux 2 Dev",
+        "WaveSpeed — Flux 2 Flash",
+        "WaveSpeed — Flux 2 Flex",
+        "WaveSpeed — Flux Kontext Max",
+        "WaveSpeed — Flux Kontext Pro",
+        "WaveSpeed — Seedream 5.0 Lite",
+        "WaveSpeed — Seedream 4.5",
+        "WaveSpeed — Nano Banana 2",
+        "WaveSpeed — Nano Banana Pro",
+        "WaveSpeed — WAN 2.6",
+        "WaveSpeed — Dreamina 3.1",
+        "WaveSpeed — Qwen Image 2.0 Pro",
+        "WaveSpeed — Kling O3",
+        "WaveSpeed — Grok 2 Image",
+        "WaveSpeed — Grok Imagine Image"
     ];
 
     // Theme presets for Mode B
@@ -121,7 +138,7 @@ export component MainWindow inherits Window {
             HorizontalBox {
                 alignment: space-between;
                 Text {
-                    text: "⚡ Batch Image Generator v1";
+                    text: "⚡ Batch Image Generator v2";
                     font-size: 17px;
                     font-weight: 700;
                     color: white;
@@ -145,22 +162,36 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // ── API Key ──
+            // ── API Keys ──
             GroupBox {
-                title: "API Key del proveedor";
-                HorizontalBox {
-                    spacing: 8px;
-                    LineEdit {
-                        text <=> root.api-key;
-                        placeholder-text: "Pega aquí la API key del modelo seleccionado";
-                        input-type: root.key-visible ? InputType.text : InputType.password;
-                        horizontal-stretch: 1;
+                title: "API Keys";
+                VerticalBox {
+                    spacing: 6px;
+                    HorizontalBox {
+                        spacing: 8px;
+                        Text { text: "xAI/Google/OpenAI:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; min-width: 130px; }
+                        LineEdit {
+                            text <=> root.api-key;
+                            placeholder-text: "API key de xAI, Google o OpenAI";
+                            input-type: root.key-visible ? InputType.text : InputType.password;
+                            horizontal-stretch: 1;
+                        }
+                        Button {
+                            text: root.key-visible ? "🔒" : "👁";
+                            max-width: 40px;
+                            clicked => {
+                                root.key-visible = !root.key-visible;
+                            }
+                        }
                     }
-                    Button {
-                        text: root.key-visible ? "🔒" : "👁";
-                        max-width: 40px;
-                        clicked => {
-                            root.key-visible = !root.key-visible;
+                    HorizontalBox {
+                        spacing: 8px;
+                        Text { text: "WaveSpeed.ai:"; color: Theme.cyan; font-size: 11px; vertical-alignment: center; min-width: 130px; }
+                        LineEdit {
+                            text <=> root.wavespeed-api-key;
+                            placeholder-text: "API key de WaveSpeed.ai (Flux, Seedream, etc.)";
+                            input-type: root.key-visible ? InputType.text : InputType.password;
+                            horizontal-stretch: 1;
                         }
                     }
                 }

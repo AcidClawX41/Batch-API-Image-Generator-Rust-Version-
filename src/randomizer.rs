@@ -234,8 +234,40 @@ pub fn modify_prompt(prompt: &str, opts: &ModifyOptions) -> String {
     if injections.is_empty() {
         base
     } else {
-        format!("{}\n{}", base, injections.join(" "))
+        // Weave the base prompt with the injections so models don't ignore
+        // the user's original intent.  Strategy:
+        //   1. Lead with the full base prompt (sets the main subject).
+        //   2. Append the randomized details as a comma-separated block that
+        //      reads as elaboration, NOT as a replacement.
+        //   3. Close with a short reinforcement of the core subject so the
+        //      model keeps it top-of-mind.
+        let detail_block = injections.join(" ");
+        let reinforcement = extract_subject_hint(&base);
+        if reinforcement.is_empty() {
+            format!("{}\nAdditional details: {}", base, detail_block)
+        } else {
+            format!(
+                "{}\nAdditional details: {}\nThe main subject remains: {}",
+                base, detail_block, reinforcement
+            )
+        }
     }
+}
+
+/// Pull a short "subject hint" from the user's base prompt.
+/// Grabs the first sentence (up to the first period, comma, or newline)
+/// capped at 120 chars.  Returns empty string if the base is too short to
+/// bother reinforcing.
+fn extract_subject_hint(base: &str) -> String {
+    if base.len() < 20 {
+        return String::new();
+    }
+    let end = base
+        .char_indices()
+        .find(|(i, c)| *i > 15 && (*c == '.' || *c == '\n'))
+        .map(|(i, _)| i)
+        .unwrap_or(base.len().min(120));
+    base[..end].trim().to_string()
 }
 
 // ─── Mode B: Generate complete prompt from scratch ───

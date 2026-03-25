@@ -1,5 +1,5 @@
 #![windows_subsystem = "windows"]
-//! main.rs — Batch Image Generator v1 (Rust + Slint)
+//! main.rs — Batch Image Generator v2 (Rust + Slint)
 //!
 //! Entry point. Wires up the Slint UI with the async API client,
 //! randomizer, and countdown timer logic.
@@ -29,6 +29,7 @@ struct ModelCatalogEntry {
 }
 
 const MODEL_CATALOG: &[ModelCatalogEntry] = &[
+    // ── xAI ──
     ModelCatalogEntry {
         provider: ImageProvider::Xai,
         model: "grok-imagine-image",
@@ -37,6 +38,7 @@ const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         provider: ImageProvider::Xai,
         model: "grok-imagine-image-pro",
     },
+    // ── Google ──
     ModelCatalogEntry {
         provider: ImageProvider::Google,
         model: "gemini-2.5-flash-image",
@@ -45,6 +47,7 @@ const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         provider: ImageProvider::Google,
         model: "gemini-3-pro-image-preview",
     },
+    // ── OpenAI ──
     ModelCatalogEntry {
         provider: ImageProvider::OpenAi,
         model: "gpt-image-1.5",
@@ -60,6 +63,79 @@ const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     ModelCatalogEntry {
         provider: ImageProvider::OpenAi,
         model: "dall-e-3",
+    },
+    // ── WaveSpeed: Flux 2 family ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "wavespeed-ai/flux-2-max/text-to-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "wavespeed-ai/flux-2-dev/text-to-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "wavespeed-ai/flux-2-flash/text-to-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "wavespeed-ai/flux-2-flex/text-to-image",
+    },
+    // ── WaveSpeed: Flux Kontext ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "wavespeed-ai/flux-kontext-max/text-to-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "wavespeed-ai/flux-kontext-pro/text-to-image",
+    },
+    // ── WaveSpeed: Seedream (ByteDance) ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "bytedance/seedream-v5.0-lite",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "bytedance/seedream-v4.5",
+    },
+    // ── WaveSpeed: Nano Banana (Google via WaveSpeed) ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "google/nano-banana-2/text-to-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "google/nano-banana-pro/text-to-image",
+    },
+    // ── WaveSpeed: WAN (Alibaba) ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "alibaba/wan-2.6/text-to-image",
+    },
+    // ── WaveSpeed: Dreamina (ByteDance) ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "bytedance/dreamina-v3.1/text-to-image",
+    },
+    // ── WaveSpeed: Qwen Image (Alibaba) ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "wavespeed-ai/qwen-image-2.0-pro/text-to-image",
+    },
+    // ── WaveSpeed: Kling (Kuaishou) ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "kwaivgi/kling-image-o3/text-to-image",
+    },
+    // ── WaveSpeed: Grok (xAI via WaveSpeed) ──
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "x-ai/grok-2-image",
+    },
+    ModelCatalogEntry {
+        provider: ImageProvider::WaveSpeed,
+        model: "x-ai/grok-imagine-image-text-to-image",
     },
 ];
 
@@ -185,9 +261,15 @@ fn main() {
         move || {
             let app = app_weak.upgrade().unwrap();
             let prompt = resolve();
-            let api_key = app.get_api_key().to_string();
             let model_idx = app.get_model_index() as usize;
             let selected_model = MODEL_CATALOG.get(model_idx).unwrap_or(&MODEL_CATALOG[0]);
+
+            // Pick the right API key based on the provider
+            let api_key = if selected_model.provider == ImageProvider::WaveSpeed {
+                app.get_wavespeed_api_key().to_string()
+            } else {
+                app.get_api_key().to_string()
+            };
             let provider = selected_model.provider;
             let model = selected_model.model.to_string();
             let output_dir = app.get_output_folder().to_string();
@@ -203,12 +285,30 @@ fn main() {
             log(&format!("Proveedor: {}", provider.display_name()), "INFO");
             log(&format!("Modelo: {}", model), "INFO");
             log(&format!("Carpeta: {}", output_dir), "INFO");
-            let prompt_preview = if prompt.len() > 120 {
-                format!("{}...", &prompt[..120])
+
+            // Show base prompt vs full prompt so the user can verify the
+            // randomizer is properly mixing both.
+            let base_prompt = app.get_prompt_base().to_string();
+            if !base_prompt.trim().is_empty() {
+                let base_preview = if base_prompt.len() > 100 {
+                    format!("{}...", &base_prompt[..100])
+                } else {
+                    base_prompt.clone()
+                };
+                log(&format!("🎯 Base prompt: \"{}\"", base_preview), "INFO");
+            }
+
+            let prompt_preview = if prompt.len() > 200 {
+                format!("{}...", &prompt[..200])
             } else {
                 prompt.clone()
             };
-            log(&format!("Prompt: {}", prompt_preview), "INFO");
+            log(&format!("📝 Prompt final ({}ch): {}", prompt.len(), prompt_preview), "INFO");
+
+            if app.get_rand_active() {
+                log("🎲 Randomizer: ACTIVO", "RAND");
+            }
+
             log(
                 &format!("Enviando petición a {} API...", provider.display_name()),
                 "INFO",

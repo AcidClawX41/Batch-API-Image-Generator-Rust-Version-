@@ -1,8 +1,8 @@
 [package]
 name = "xai-imagine-generator"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
-description = "xAI Imagine API — Batch Image Generator with Randomizer"
+description = "Multi-provider Batch Image Generator with Randomizer (xAI, Google, OpenAI, WaveSpeed)"
 authors = ["Eric Valls Gramunt"]
 
 [dependencies]
