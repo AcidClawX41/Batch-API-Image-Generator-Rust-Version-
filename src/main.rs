@@ -1,14 +1,14 @@
 #![windows_subsystem = "windows"]
-//! main.rs — Batch Image Generator v2 (Rust + Slint)
+//! main.rs — Batch Image Generator v2.1.0 (Rust + Slint)
 //!
 //! Entry point. Wires up the Slint UI with the async API client,
-//! randomizer, and countdown timer logic.
+//! randomizer, countdown timer logic, and Image-to-Image conditioning.
 
 mod api;
 mod pools;
 mod randomizer;
 
-use api::ImageProvider;
+use api::{I2iMode, ImageProvider};
 use randomizer::ModifyOptions;
 use slint::{Timer, TimerMode};
 use std::sync::{Arc, Mutex};
@@ -21,6 +21,11 @@ struct AppState {
     running: bool,
     seconds_left: i32,
     interval: i32,
+    /// Base64-encoded reference image (raw bytes, no data-URI header).
+    /// None = text-to-image mode.
+    ref_image_b64: Option<String>,
+    /// MIME type of the loaded reference image (e.g. "image/webp", "image/jpeg").
+    ref_image_mime: String,
 }
 
 struct ModelCatalogEntry {
@@ -141,7 +146,6 @@ const MODEL_CATALOG: &[ModelCatalogEntry] = &[
 
 fn main() {
     // On macOS, prefer femtovg backend to work around click issues on Tahoe+.
-    // Only sets the hint if the user hasn't already overridden via env var.
     #[cfg(target_os = "macos")]
     {
         if std::env::var("SLINT_BACKEND").is_err() {
@@ -161,6 +165,8 @@ fn main() {
         running: false,
         seconds_left: 0,
         interval: 60,
+        ref_image_b64: None,
+        ref_image_mime: "image/png".to_string(),
     }));
 
     // Tokio runtime for async HTTP requests
@@ -184,7 +190,7 @@ fn main() {
                     app.set_log_text(format!("{}{}", current, line).into());
                 }
             })
-                .ok();
+            .ok();
         }
     };
 
@@ -274,6 +280,18 @@ fn main() {
             let model = selected_model.model.to_string();
             let output_dir = app.get_output_folder().to_string();
 
+            // ── I2I: read ref image, MIME, and mode from shared state / UI ──
+            let (ref_image_b64, ref_image_mime): (Option<String>, String) = {
+                let st = state.lock().unwrap();
+                (st.ref_image_b64.clone(), st.ref_image_mime.clone())
+            };
+            // i2i_mode_index: 0 = StyleReference, 1 = DirectEdit
+            let i2i_mode = if app.get_i2i_mode_index() == 1 {
+                I2iMode::DirectEdit
+            } else {
+                I2iMode::StyleReference
+            };
+
             app.set_progress_indeterminate(true);
             app.set_progress_label("Generando imagen...".into());
 
@@ -285,6 +303,14 @@ fn main() {
             log(&format!("Proveedor: {}", provider.display_name()), "INFO");
             log(&format!("Modelo: {}", model), "INFO");
             log(&format!("Carpeta: {}", output_dir), "INFO");
+
+            if let Some(ref _b64) = ref_image_b64 {
+                let mode_str = match i2i_mode {
+                    I2iMode::StyleReference => "Referencia de Estilo",
+                    I2iMode::DirectEdit => "Edición Directa",
+                };
+                log(&format!("🖼 Image-to-Image: ACTIVO (modo: {})", mode_str), "I2I");
+            }
 
             // Show base prompt vs full prompt so the user can verify the
             // randomizer is properly mixing both.
@@ -303,7 +329,10 @@ fn main() {
             } else {
                 prompt.clone()
             };
-            log(&format!("📝 Prompt final ({}ch): {}", prompt.len(), prompt_preview), "INFO");
+            log(
+                &format!("📝 Prompt final ({}ch): {}", prompt.len(), prompt_preview),
+                "INFO",
+            );
 
             if app.get_rand_active() {
                 log("🎲 Randomizer: ACTIVO", "RAND");
@@ -315,8 +344,18 @@ fn main() {
             );
 
             rt.spawn(async move {
-                let result =
-                    api::generate_image(provider, &api_key, &prompt, &model, &output_dir).await;
+                let ref_b64_ref = ref_image_b64.as_deref();
+                let result = api::generate_image(
+                    provider,
+                    &api_key,
+                    &prompt,
+                    &model,
+                    &output_dir,
+                    ref_b64_ref,
+                    &ref_image_mime,
+                    i2i_mode,
+                )
+                .await;
 
                 slint::invoke_from_event_loop(move || {
                     if let Some(app) = app_weak2.upgrade() {
@@ -344,13 +383,18 @@ fn main() {
                                     drop(st);
                                     let mins = secs / 60;
                                     let s = secs % 60;
-                                    app.set_countdown_text(format!("{:02}:{:02}", mins, s).into());
+                                    app.set_countdown_text(
+                                        format!("{:02}:{:02}", mins, s).into(),
+                                    );
                                     app.set_progress_value(1.0);
                                     app.set_progress_label(
                                         format!("Siguiente en {}s", secs).into(),
                                     );
                                     log2(
-                                        &format!("⏱ Cuenta atrás: {}s hasta la siguiente.", secs),
+                                        &format!(
+                                            "⏱ Cuenta atrás: {}s hasta la siguiente.",
+                                            secs
+                                        ),
                                         "INFO",
                                     );
                                 }
@@ -372,7 +416,7 @@ fn main() {
                         }
                     }
                 })
-                    .ok();
+                .ok();
             });
         }
     };
@@ -439,7 +483,7 @@ fn main() {
         });
     }
 
-    // Browse folder
+    // Browse output folder
     {
         let app_weak = app.as_weak();
         app.on_browse_folder(move || {
@@ -454,6 +498,88 @@ fn main() {
                     app.set_output_folder(folder.to_string_lossy().to_string().into());
                 }
             }
+        });
+    }
+
+    // ── Browse reference image (I2I) ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+
+        app.on_browse_ref_image(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let dialog = rfd::FileDialog::new()
+                    .set_title("Seleccionar imagen de referencia")
+                    .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
+                    .set_directory(dirs::home_dir().unwrap_or_default());
+
+                if let Some(path) = dialog.pick_file() {
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            use base64::Engine;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let size_kb = bytes.len() / 1024;
+
+                            // Detect MIME from extension so the data URI is correct
+                            let ext = path
+                                .extension()
+                                .map(|e| e.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            let mime = api::mime_from_ext(&ext).to_string();
+
+                            // Store encoded image + MIME in shared state
+                            {
+                                let mut st = state.lock().unwrap();
+                                st.ref_image_b64 = Some(b64);
+                                st.ref_image_mime = mime.clone();
+                            }
+
+                            // Show filename in UI
+                            let filename = path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "imagen".to_string());
+                            app.set_ref_image_path(filename.clone().into());
+                            app.set_ref_image_loaded(true);
+
+                            log(
+                                &format!(
+                                    "🖼 Imagen de referencia cargada: {} ({}KB, {})",
+                                    filename, size_kb, mime
+                                ),
+                                "I2I",
+                            );
+                        }
+                        Err(e) => {
+                            log(
+                                &format!("❌ Error leyendo imagen de referencia: {}", e),
+                                "ERROR",
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Clear reference image (I2I) ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+
+        app.on_clear_ref_image(move || {
+            {
+                let mut st = state.lock().unwrap();
+                st.ref_image_b64 = None;
+                st.ref_image_mime = "image/png".to_string();
+            }
+            if let Some(app) = app_weak.upgrade() {
+                app.set_ref_image_path("".into());
+                app.set_ref_image_loaded(false);
+            }
+            log("🗑 Imagen de referencia eliminada. Modo: texto solo.", "I2I");
         });
     }
 
@@ -544,7 +670,6 @@ fn main() {
                     app.set_progress_label(format!("Siguiente en {}s", secs).into());
                 } else {
                     // Countdown hit 0 — fire next generation
-                    // seconds_left will be reset in fire_generation's success callback
                     drop(st);
                     fire();
                 }
