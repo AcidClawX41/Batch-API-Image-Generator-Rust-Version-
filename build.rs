@@ -10,7 +10,7 @@ fn main() {
         res.set_icon("icons/xai_generator.ico");
         res.set("ProductName", "AI Batch Image Generator");
         res.set("FileDescription", "Batch Image Generator v2");
-        res.set("ProductVersion", "2.0.0");
+        res.set("ProductVersion", "2.2.0");
         res.compile().unwrap();
     }
 }

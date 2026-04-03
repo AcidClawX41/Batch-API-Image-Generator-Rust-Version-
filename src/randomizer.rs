@@ -80,16 +80,17 @@ pub fn modify_prompt(prompt: &str, opts: &ModifyOptions) -> String {
     let mut base = prompt.trim_end().to_string();
     let mut injections: Vec<String> = Vec::new();
 
-    // REPLACE: Nail / claw color
+    // REPLACE: Nail / claw color and style
     if opts.do_nails {
         let color = pick(pools::NAIL_COLORS);
+        let style = pick(pools::NAIL_STYLES);
         let nail_re = Regex::new(
-            r"(?i)(?:shiny |glossy |matte |metallic |bright |dark |deep |hot |bubblegum |ruby |blood |rose |chrome |pearl |fiery |neon |midnight |emerald )*(?:black|red|pink|yellow|gold|silver|white|blue|green|purple|crimson|carmine|cherry|orange|grey|gray)(?:\s+(?:metallic|glossy|matte))?(\s+(?:nails|claws|toenails|nails and toenails|nails and claws|claws and toenails))"
+            r"(?i)\b(?:extremely|very|super|extra|long|short|sharp|pointed|curved|claw-like|claw|acrylic|natural|shiny|glossy|matte|metallic|bright|dark|deep|hot|bubblegum|ruby|blood|rose|chrome|pearl|fiery|neon|midnight|emerald|black|red|pink|yellow|gold|silver|white|blue|green|purple|crimson|carmine|cherry|orange|grey|gray|painted|polished|manicured|chipped|broken|glittery|sparkly|huge|massive|and|with)\s+(?:(?:extremely|very|super|extra|long|short|sharp|pointed|curved|claw-like|claw|acrylic|natural|shiny|glossy|matte|metallic|bright|dark|deep|hot|bubblegum|ruby|blood|rose|chrome|pearl|fiery|neon|midnight|emerald|black|red|pink|yellow|gold|silver|white|blue|green|purple|crimson|carmine|cherry|orange|grey|gray|painted|polished|manicured|chipped|broken|glittery|sparkly|huge|massive|and|with)\s+)*(?:nails|claws|toenails|talons)\b"
         ).unwrap();
         if nail_re.is_match(&base) {
-            base = nail_re.replace_all(&base, |caps: &regex::Captures| {
-                format!("{}{}", color, &caps[1])
-            }).to_string();
+            base = nail_re.replace_all(&base, format!("{} {}", color, style).as_str()).to_string();
+        } else {
+            injections.push(format!("Her hands feature {} {}.", color, style));
         }
     }
 
@@ -118,7 +119,7 @@ pub fn modify_prompt(prompt: &str, opts: &ModifyOptions) -> String {
     if opts.do_expression {
         let expr = pick(pools::EXPRESSIONS);
         let expr_re = Regex::new(
-            r"(?i)(a\s+(?:confident|cold|playful|mischievous|melancholic|soft|defiant|fierce|dreamy|emotionally|teasing|proud)[^,.]*)"
+            r"(?i)\b(?:a\s+|an\s+)?(?:and\s+|with\s+|very\s+|extremely\s+|slightly\s+|confident\s+|cold\s+|playful\s+|mischievous\s+|melancholic\s+|soft\s+|defiant\s+|fierce\s+|dreamy\s+|emotionally\s+|teasing\s+|proud\s+|aggressive\s+|determined\s+|shy\s+|intense\s+|happy\s+|sad\s+|angry\s+|serious\s+|seductive\s+|smug\s+|evil\s+|gentle\s+|warm\s+|sweet\s+|crazy\s+|insane\s+|wild\s+|blank\s+|stoic\s+|neutral\s+|arrogant\s+|cocky\s+)*(?:expression|stare|smirk|grin|gaze|look|smile)\b"
         ).unwrap();
         if expr_re.is_match(&base) {
             base = expr_re.replace(&base, expr).to_string();

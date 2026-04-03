@@ -1,6 +1,6 @@
-# Batch API Image Generator v2 (Rust + Slint)
+# Batch API Image Generator v2.2 (Rust + Slint)
 
-Desktop batch image generator built with **Rust + Slint**. Generates AI images at configurable intervals with a powerful prompt randomizer engine. Supports **24 models** across 4 API providers.
+Desktop batch image generator built with **Rust + Slint**. Generates AI images at configurable intervals with a powerful prompt randomizer engine and advanced **Image-to-Image** conditioning. Supports **24 models** across 4 API providers.
 
 ## Supported Providers & Models
 
@@ -46,6 +46,10 @@ Desktop batch image generator built with **Rust + Slint**. Generates AI images a
 
 ## Features
 
+- **Image-to-Image (I2I) Conditioning (New in v2.1):** 
+  - Upload reference images (PNG/JPG/WEBP) to guide generation styles or directly edit existing pictures.
+  - Choose between **Style Reference** (loose guidance) and **Direct Edit** (strict adherence to content).
+  - Encodes images directly into Base64 for seamless transmission to the supported APIs.
 - **Two generation modes:**
   - **Mode A** — Write your own prompt + randomizer injects additional details (outfit, lighting, pose, camera, etc.)
   - **Mode B** — Fully auto-generated prompts from curated pools and theme presets
@@ -88,6 +92,8 @@ ui/
 
 - xAI, Google, and OpenAI use OpenAI-compatible endpoints returning `b64_json`.
 - WaveSpeed uses a different flow: POST to submit → sync mode waits for completion → download image from CDN URL. Falls back to polling if sync mode times out.
+- **WaveSpeed I2I Dynamic Routing (v2.2)**: The app dynamically detects model families and routes image reference requests to their respective endpoints (`/image-edit` for WAN, `/edit` with an `images[]` payload for Seedream/Qwen/Nano-Banana, and the base URL for Flux Kontext).
+- **Advanced Regex Engine (v2.2)**: The randomizer uses strict bounding word algorithms to target precise descriptors (like nails, colors, and expressions) without overriding or erasing the original prompt's core characters.
 - Seedream and Dreamina models automatically use 1920x1920 resolution (minimum required by ByteDance). All other WaveSpeed models default to 1024x1024.
 - Output images are saved to the selected folder with a provider-specific filename prefix and timestamp.
 

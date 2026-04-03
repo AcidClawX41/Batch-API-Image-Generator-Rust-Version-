@@ -1,9 +1,9 @@
-// ui/main.slint — Batch Image Generator (Rust + Slint)
+// ui/main.slint — Batch Image Generator (Rust + Slint) v2.2.0
 // Responsive layout — adapts from ~600px height upward
 
 import { Button, LineEdit, ComboBox, CheckBox, SpinBox, TextEdit,
          GroupBox, ProgressIndicator, VerticalBox, HorizontalBox,
-         ScrollView, Slider, StandardButton } from "std-widgets.slint";
+         ScrollView } from "std-widgets.slint";
 
 // ─── Color palette ───
 global Theme {
@@ -21,10 +21,10 @@ global Theme {
 }
 
 export component MainWindow inherits Window {
-    title: "Batch Image Generator v2 (Rust)";
+    title: "Batch Image Generator v2.2 (Rust)";
     min-width: 620px;
     min-height: 580px;
-    preferred-width: 880px;
+    preferred-width: 980px;
     preferred-height: 1080px;
     background: Theme.bg;
     icon: @image-url("../icons/xai_generator.png");
@@ -37,11 +37,11 @@ export component MainWindow inherits Window {
     in-out property <string> log-text;
     in-out property <string> output-folder;
     in-out property <string> status-text: "● DETENIDO";
-    in-out property <color> status-color: Theme.text-dim;
+    in-out property <color>  status-color: Theme.text-dim;
     in-out property <string> countdown-text: "--:--";
-    in-out property <int> generation-count: 0;
-    in-out property <float> progress-value: 0;
-    in-out property <bool> progress-indeterminate: false;
+    in-out property <int>    generation-count: 0;
+    in-out property <float>  progress-value: 0;
+    in-out property <bool>   progress-indeterminate: false;
     in-out property <string> progress-label: "Esperando...";
 
     // Mode selector
@@ -77,7 +77,7 @@ export component MainWindow inherits Window {
     ];
 
     // Theme presets for Mode B
-    in-out property <int> theme-index: 0;
+    in-out property <int>    theme-index: 0;
     in-out property <[string]> theme-list: [
         "Tsundere School", "Cyberpunk", "Gothic",
         "Miko / Shrine", "Casual Modern", "🎲 Full Random"
@@ -120,6 +120,14 @@ export component MainWindow inherits Window {
     in-out property <bool> is-running: false;
     in-out property <bool> key-visible: false;
 
+    // ─── Image-to-Image properties ───
+    /// Filename of the loaded reference image (display only).
+    in-out property <string> ref-image-path: "";
+    /// True when a reference image has been loaded into memory.
+    in-out property <bool>   ref-image-loaded: false;
+    /// 0 = Referencia de estilo, 1 = Edición directa
+    in-out property <int>    i2i-mode-index: 0;
+
     // ─── Callbacks (handled in Rust) ───
     callback start-loop();
     callback stop-loop();
@@ -127,6 +135,8 @@ export component MainWindow inherits Window {
     callback toggle-randomizer();
     callback gen-preview-b();
     callback browse-folder();
+    callback browse-ref-image();
+    callback clear-ref-image();
 
     // ─── Main scrollable area ───
     ScrollView {
@@ -138,7 +148,7 @@ export component MainWindow inherits Window {
             HorizontalBox {
                 alignment: space-between;
                 Text {
-                    text: "⚡ Batch Image Generator v2";
+                    text: "⚡ Batch Image Generator v2.2";
                     font-size: 17px;
                     font-weight: 700;
                     color: white;
@@ -179,9 +189,7 @@ export component MainWindow inherits Window {
                         Button {
                             text: root.key-visible ? "🔒" : "👁";
                             max-width: 40px;
-                            clicked => {
-                                root.key-visible = !root.key-visible;
-                            }
+                            clicked => { root.key-visible = !root.key-visible; }
                         }
                     }
                     HorizontalBox {
@@ -248,9 +256,9 @@ export component MainWindow inherits Window {
                             spacing: 0px;
                             alignment: start;
                             Text { text: "Reemplazar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
-                            CheckBox { text: "Uñas"; checked <=> root.chk-nails; enabled: root.rand-active; width: 120px; }
-                            CheckBox { text: "Orientación"; checked <=> root.chk-orient; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Expresión"; checked <=> root.chk-expression; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Uñas";       checked <=> root.chk-nails;      enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Orientación"; checked <=> root.chk-orient;     enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Expresión";  checked <=> root.chk-expression; enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 2: Inject operations
@@ -258,10 +266,10 @@ export component MainWindow inherits Window {
                             spacing: 0px;
                             alignment: start;
                             Text { text: "Inyectar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
-                            CheckBox { text: "Ropa"; checked <=> root.chk-outfit; enabled: root.rand-active; width: 120px; }
-                            CheckBox { text: "Medias"; checked <=> root.chk-legwear; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Ropa";      checked <=> root.chk-outfit;      enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Medias";    checked <=> root.chk-legwear;     enabled: root.rand-active; width: 140px; }
                             CheckBox { text: "Escenario"; checked <=> root.chk-environment; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Atmósfera"; checked <=> root.chk-atmosphere; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Atmósfera"; checked <=> root.chk-atmosphere;  enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 3: More inject
@@ -269,10 +277,10 @@ export component MainWindow inherits Window {
                             spacing: 0px;
                             alignment: start;
                             Rectangle { width: 80px; }
-                            CheckBox { text: "Pose"; checked <=> root.chk-pose; enabled: root.rand-active; width: 120px; }
-                            CheckBox { text: "Luz"; checked <=> root.chk-lighting; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Cámara"; checked <=> root.chk-camera; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Detalles Raros"; checked <=> root.chk-rare; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Pose";           checked <=> root.chk-pose;     enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Luz";            checked <=> root.chk-lighting; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Cámara";         checked <=> root.chk-camera;   enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Detalles Raros"; checked <=> root.chk-rare;     enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 4: Character extras
@@ -281,9 +289,9 @@ export component MainWindow inherits Window {
                             alignment: start;
                             Text { text: "Personaje:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
                             CheckBox { text: "Accesorios"; checked <=> root.chk-accessories; enabled: root.rand-active; width: 120px; }
-                            CheckBox { text: "Maquillaje"; checked <=> root.chk-makeup; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Silueta"; checked <=> root.chk-body-type; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Edad"; checked <=> root.chk-age-vibe; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Maquillaje"; checked <=> root.chk-makeup;      enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Silueta";    checked <=> root.chk-body-type;   enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Edad";       checked <=> root.chk-age-vibe;    enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 5: Scene extras
@@ -292,8 +300,8 @@ export component MainWindow inherits Window {
                             alignment: start;
                             Text { text: "Escena:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
                             CheckBox { text: "Paleta color"; checked <=> root.chk-color-palette; enabled: root.rand-active; width: 120px; }
-                            CheckBox { text: "Hora del día"; checked <=> root.chk-time-of-day; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Clima"; checked <=> root.chk-weather; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Hora del día"; checked <=> root.chk-time-of-day;   enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Clima";        checked <=> root.chk-weather;       enabled: root.rand-active; width: 140px; }
                         }
 
                         // Row 6: Detail extras
@@ -302,8 +310,8 @@ export component MainWindow inherits Window {
                             alignment: start;
                             Rectangle { width: 80px; }
                             CheckBox { text: "Props fondo"; checked <=> root.chk-bg-props; enabled: root.rand-active; width: 120px; }
-                            CheckBox { text: "Material"; checked <=> root.chk-material; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Movimiento"; checked <=> root.chk-motion; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Material";    checked <=> root.chk-material; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Movimiento";  checked <=> root.chk-motion;   enabled: root.rand-active; width: 140px; }
                         }
                     }
                 }
@@ -349,6 +357,103 @@ export component MainWindow inherits Window {
                     min-height: 50px;
                     vertical-stretch: 1;
                     wrap: word-wrap;
+                }
+            }
+
+            // ── 🖼 Image-to-Image Conditioning ──
+            GroupBox {
+                title: "🖼 Image-to-Image Conditioning";
+
+                VerticalBox {
+                    spacing: 8px;
+
+                    // ── Status bar: loaded or empty ──
+                    Rectangle {
+                        height: 34px;
+                        border-radius: 5px;
+                        border-width: 1px;
+                        background: root.ref-image-loaded ? #112211 : Theme.surface;
+                        border-color: root.ref-image-loaded ? Theme.green : Theme.border;
+
+                        HorizontalBox {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            Text {
+                                text: root.ref-image-loaded ? "🟢" : "⚪";
+                                font-size: 14px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: root.ref-image-loaded
+                                    ? root.ref-image-path
+                                    : "Sin imagen — solo texto";
+                                color: root.ref-image-loaded ? Theme.green : Theme.text-dim;
+                                font-size: 11px;
+                                font-weight: root.ref-image-loaded ? 700 : 400;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                        }
+                    }
+
+                    // ── Buttons: Select + Clear ──
+                    HorizontalBox {
+                        spacing: 8px;
+
+                        Button {
+                            text: "📂  Seleccionar imagen";
+                            min-height: 30px;
+                            horizontal-stretch: 1;
+                            clicked => { root.browse-ref-image(); }
+                        }
+
+                        Button {
+                            text: "🗑  Quitar";
+                            min-height: 30px;
+                            enabled: root.ref-image-loaded;
+                            horizontal-stretch: 0;
+                            min-width: 90px;
+                            clicked => { root.clear-ref-image(); }
+                        }
+                    }
+
+                    // ── Mode selector ──
+                    HorizontalBox {
+                        spacing: 10px;
+                        alignment: start;
+
+                        Text {
+                            text: "Modo Image to Image:";
+                            color: root.ref-image-loaded ? Theme.text : Theme.text-dim;
+                            font-size: 11px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                            min-width: 72px;
+                        }
+                        ComboBox {
+                            model: [
+                                "Referencia de estilo  (prompt guía el contenido)",
+                                "Edición directa  (transforma la imagen)"
+                            ];
+                            current-index <=> root.i2i-mode-index;
+                            enabled: root.ref-image-loaded;
+                            horizontal-stretch: 1;
+                            min-width: 260px;
+                        }
+                    }
+
+                    // ── Info note ──
+                    Text {
+                        text: (root.ref-image-loaded ? "✅ Imagen activa — se enviará junto al prompt. Randomizer sigue activo." : "⚠ Sin imagen de referencia.");
+                        color: (root.ref-image-loaded ? Theme.green : Theme.yellow);
+                        font-size: 10px;
+                        wrap: word-wrap;
+                        horizontal-stretch: 1;
+                    }
                 }
             }
 
@@ -422,34 +527,48 @@ export component MainWindow inherits Window {
             }
 
             // ── Progress ──
-            HorizontalBox {
-                spacing: 10px;
-                ProgressIndicator {
-                    progress: root.progress-indeterminate ? -1 : root.progress-value;
-                    horizontal-stretch: 3;
-                    min-height: 14px;
+            VerticalBox {
+                spacing: 4px;
+
+                HorizontalBox {
+                    spacing: 10px;
+                    ProgressIndicator {
+                        progress: root.progress-indeterminate ? -1 : root.progress-value;
+                        horizontal-stretch: 1;
+                        min-height: 14px;
+                    }
+                    Text {
+                        text: root.countdown-text;
+                        color: Theme.accent;
+                        font-size: 15px;
+                        font-weight: 700;
+                        min-width: 55px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: root.generation-count;
+                        color: Theme.accent;
+                        font-size: 22px;
+                        font-weight: 700;
+                        min-width: 45px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "imgs";
+                        color: Theme.text-dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
                 }
+
                 Text {
-                    text: root.countdown-text;
-                    color: Theme.accent;
-                    font-size: 15px;
-                    font-weight: 700;
-                    min-width: 55px;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: root.generation-count;
-                    color: Theme.accent;
-                    font-size: 22px;
-                    font-weight: 700;
-                    min-width: 45px;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: "imgs";
-                    color: Theme.text-dim;
+                    text: root.progress-label;
+                    color: root.progress-label == "Completado" ? Theme.green
+                         : root.progress-label == "Error"      ? Theme.red
+                         : root.progress-label == "Detenido"   ? Theme.text-dim
+                         : Theme.cyan;
                     font-size: 11px;
-                    vertical-alignment: center;
+                    horizontal-alignment: right;
                 }
             }
 
