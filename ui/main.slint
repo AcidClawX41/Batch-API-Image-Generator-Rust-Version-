@@ -1,4 +1,4 @@
-// ui/main.slint — Batch Image Generator (Rust + Slint) v2.2.0
+// ui/main.slint — Batch Image Generator (Rust + Slint) v2.4.0
 // Responsive layout — adapts from ~600px height upward
 
 import { Button, LineEdit, ComboBox, CheckBox, SpinBox, TextEdit,
@@ -18,14 +18,15 @@ global Theme {
     out property <color> purple: #b08cdf;
     out property <color> cyan: #8ccfdf;
     out property <color> yellow: #f0c674;
+    out property <color> orange: #e0a060;
 }
 
 export component MainWindow inherits Window {
-    title: "Batch Image Generator v2.2 (Rust)";
+    title: "Batch Image Generator v2.4 (Rust)";
     min-width: 620px;
     min-height: 580px;
     preferred-width: 980px;
-    preferred-height: 1080px;
+    preferred-height: 1100px;
     background: Theme.bg;
     icon: @image-url("../icons/xai_generator.png");
 
@@ -50,30 +51,54 @@ export component MainWindow inherits Window {
     // Model
     in-out property <int> model-index: 0;
     in-out property <[string]> model-list: [
+        // xAI
         "xAI — grok-imagine-image",
         "xAI — grok-imagine-image-pro",
-        "Google — gemini-2.5-flash-image (Nano Banana)",
-        "Google — gemini-3-pro-image-preview (Nano Banana Pro)",
+        // Google
+        "Google — gemini-2.5-flash-image",
+        "Google — gemini-3-pro-image-preview",
+        // OpenAI
         "OpenAI — gpt-image-1.5",
         "OpenAI — gpt-image-1",
         "OpenAI — gpt-image-1-mini",
         "OpenAI — dall-e-3 (legacy)",
+        // WaveSpeed: Flux 2 (T2I only)
         "WaveSpeed — Flux 2 Max",
         "WaveSpeed — Flux 2 Dev",
         "WaveSpeed — Flux 2 Flash",
         "WaveSpeed — Flux 2 Flex",
-        "WaveSpeed — Flux Kontext Max",
-        "WaveSpeed — Flux Kontext Pro",
+        // WaveSpeed: Flux Kontext single (1 img)
+        "WaveSpeed — Flux Kontext Max  [1 img]",
+        "WaveSpeed — Flux Kontext Pro  [1 img]",
+        "WaveSpeed — Flux Kontext Dev  [1 img]",
+        // WaveSpeed: Flux Kontext Multi (up to 5 imgs)
+        "WaveSpeed — Flux Kontext Max Multi  [★ 5 imgs]",
+        "WaveSpeed — Flux Kontext Pro Multi  [★ 5 imgs]",
+        // WaveSpeed: WAN I2I
+        "WaveSpeed — WAN 2.2  [img→img]",
+        "WaveSpeed — WAN 2.6  [img→img]",
+        // WaveSpeed: UNO multi-ref
+        "WaveSpeed — UNO  [★ multi-ref]",
+        // WaveSpeed: other
         "WaveSpeed — Seedream 5.0 Lite",
         "WaveSpeed — Seedream 4.5",
         "WaveSpeed — Nano Banana 2",
         "WaveSpeed — Nano Banana Pro",
-        "WaveSpeed — WAN 2.6",
         "WaveSpeed — Dreamina 3.1",
         "WaveSpeed — Qwen Image 2.0 Pro",
         "WaveSpeed — Kling O3",
         "WaveSpeed — Grok 2 Image",
-        "WaveSpeed — Grok Imagine Image"
+        "WaveSpeed — Grok Imagine Image",
+        // I2I nativos confirmados
+        "WaveSpeed — Grok Imagine Edit  [I2I]",
+        "WaveSpeed — Nano Banana 2 Edit  [★ 14 imgs]",
+        "WaveSpeed — Nano Banana 2 Edit Fast  [I2I]",
+        "WaveSpeed — Nano Banana Pro Edit  [I2I]",
+        "WaveSpeed — Seedream 5.0 Lite Edit  [I2I]",
+        "WaveSpeed — Seedream 4.5 Edit  [I2I]",
+        "WaveSpeed — Qwen Image Edit  [I2I]",
+        "WaveSpeed — Flux 2 Klein Edit  [I2I]",
+        "WaveSpeed — WAN 2.7 Edit  [I2I]"
     ];
 
     // Theme presets for Mode B
@@ -99,8 +124,6 @@ export component MainWindow inherits Window {
     in-out property <bool> chk-lighting: false;
     in-out property <bool> chk-camera: false;
     in-out property <bool> chk-rare: false;
-
-    // New randomizer pools (Mode A)
     in-out property <bool> chk-accessories: false;
     in-out property <bool> chk-makeup: false;
     in-out property <bool> chk-body-type: false;
@@ -121,22 +144,38 @@ export component MainWindow inherits Window {
     in-out property <bool> key-visible: false;
 
     // ─── Image-to-Image properties ───
-    /// Filename of the loaded reference image (display only).
     in-out property <string> ref-image-path: "";
-    /// True when a reference image has been loaded into memory.
     in-out property <bool>   ref-image-loaded: false;
-    /// 0 = Referencia de estilo, 1 = Edición directa
+    in-out property <string> ref-image2-path: "";
+    in-out property <bool>   ref-image2-loaded: false;
+    // Extra slots for multi-ref models (Flux Kontext Multi, UNO)
+    in-out property <string> ref-image3-path: "";
+    in-out property <bool>   ref-image3-loaded: false;
+    in-out property <string> ref-image4-path: "";
+    in-out property <bool>   ref-image4-loaded: false;
+    in-out property <string> ref-image5-path: "";
+    in-out property <bool>   ref-image5-loaded: false;
+    // 0 = Referencia de estilo, 1 = Edición directa
     in-out property <int>    i2i-mode-index: 0;
 
     // ─── Callbacks (handled in Rust) ───
     callback start-loop();
     callback stop-loop();
+    callback start-burst();
     callback single-generate();
     callback toggle-randomizer();
     callback gen-preview-b();
     callback browse-folder();
     callback browse-ref-image();
     callback clear-ref-image();
+    callback browse-ref-image2();
+    callback clear-ref-image2();
+    callback browse-ref-image3();
+    callback clear-ref-image3();
+    callback browse-ref-image4();
+    callback clear-ref-image4();
+    callback browse-ref-image5();
+    callback clear-ref-image5();
 
     // ─── Main scrollable area ───
     ScrollView {
@@ -148,7 +187,7 @@ export component MainWindow inherits Window {
             HorizontalBox {
                 alignment: space-between;
                 Text {
-                    text: "⚡ Batch Image Generator v2.2";
+                    text: "⚡ Batch Image Generator v2.4";
                     font-size: 17px;
                     font-weight: 700;
                     color: white;
@@ -223,7 +262,7 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // ── MODE A: Manual prompt + randomizer ──
+            // ── MODE A ──
             if root.current-mode == 0 : VerticalBox {
                 spacing: 6px;
 
@@ -242,7 +281,6 @@ export component MainWindow inherits Window {
                     VerticalBox {
                         spacing: 5px;
 
-                        // Toggle button
                         HorizontalBox {
                             Button {
                                 text: root.rand-active ? "🎲  Aleatorio: ON" : "🎲  Aleatorio: OFF";
@@ -251,28 +289,25 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        // Row 1: Replace operations
                         HorizontalBox {
                             spacing: 0px;
                             alignment: start;
                             Text { text: "Reemplazar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
-                            CheckBox { text: "Uñas";       checked <=> root.chk-nails;      enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Uñas";        checked <=> root.chk-nails;      enabled: root.rand-active; width: 120px; }
                             CheckBox { text: "Orientación"; checked <=> root.chk-orient;     enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Expresión";  checked <=> root.chk-expression; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Expresión";   checked <=> root.chk-expression; enabled: root.rand-active; width: 140px; }
                         }
 
-                        // Row 2: Inject operations
                         HorizontalBox {
                             spacing: 0px;
                             alignment: start;
                             Text { text: "Inyectar:"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; width: 80px; }
-                            CheckBox { text: "Ropa";      checked <=> root.chk-outfit;      enabled: root.rand-active; width: 120px; }
-                            CheckBox { text: "Medias";    checked <=> root.chk-legwear;     enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Escenario"; checked <=> root.chk-environment; enabled: root.rand-active; width: 140px; }
-                            CheckBox { text: "Atmósfera"; checked <=> root.chk-atmosphere;  enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Ropa";       checked <=> root.chk-outfit;      enabled: root.rand-active; width: 120px; }
+                            CheckBox { text: "Medias";     checked <=> root.chk-legwear;     enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Escenario";  checked <=> root.chk-environment; enabled: root.rand-active; width: 140px; }
+                            CheckBox { text: "Atmósfera";  checked <=> root.chk-atmosphere;  enabled: root.rand-active; width: 140px; }
                         }
 
-                        // Row 3: More inject
                         HorizontalBox {
                             spacing: 0px;
                             alignment: start;
@@ -283,7 +318,6 @@ export component MainWindow inherits Window {
                             CheckBox { text: "Detalles Raros"; checked <=> root.chk-rare;     enabled: root.rand-active; width: 140px; }
                         }
 
-                        // Row 4: Character extras
                         HorizontalBox {
                             spacing: 0px;
                             alignment: start;
@@ -294,7 +328,6 @@ export component MainWindow inherits Window {
                             CheckBox { text: "Edad";       checked <=> root.chk-age-vibe;    enabled: root.rand-active; width: 140px; }
                         }
 
-                        // Row 5: Scene extras
                         HorizontalBox {
                             spacing: 0px;
                             alignment: start;
@@ -304,7 +337,6 @@ export component MainWindow inherits Window {
                             CheckBox { text: "Clima";        checked <=> root.chk-weather;       enabled: root.rand-active; width: 140px; }
                         }
 
-                        // Row 6: Detail extras
                         HorizontalBox {
                             spacing: 0px;
                             alignment: start;
@@ -317,7 +349,7 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // ── MODE B: Auto-generated prompt ──
+            // ── MODE B ──
             if root.current-mode == 1 : GroupBox {
                 title: "🎰 Auto-Generador (Mode B)";
 
@@ -367,72 +399,153 @@ export component MainWindow inherits Window {
                 VerticalBox {
                     spacing: 8px;
 
-                    // ── Status bar: loaded or empty ──
-                    Rectangle {
-                        height: 34px;
-                        border-radius: 5px;
-                        border-width: 1px;
-                        background: root.ref-image-loaded ? #112211 : Theme.surface;
-                        border-color: root.ref-image-loaded ? Theme.green : Theme.border;
-
-                        HorizontalBox {
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            spacing: 8px;
-                            alignment: start;
-
-                            Text {
-                                text: root.ref-image-loaded ? "🟢" : "⚪";
-                                font-size: 14px;
-                                vertical-alignment: center;
-                            }
-                            Text {
-                                text: root.ref-image-loaded
-                                    ? root.ref-image-path
-                                    : "Sin imagen — solo texto";
-                                color: root.ref-image-loaded ? Theme.green : Theme.text-dim;
-                                font-size: 11px;
-                                font-weight: root.ref-image-loaded ? 700 : 400;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                overflow: elide;
+                    // ── IMAGEN 1: persona / estilo ──
+                    HorizontalBox {
+                        spacing: 0px; alignment: start;
+                        Text { text: "Img 1 (persona):"; color: Theme.text-dim; font-size: 10px; font-weight: 700; vertical-alignment: center; min-width: 110px; }
+                        Rectangle {
+                            height: 28px; border-radius: 4px; border-width: 1px;
+                            background: root.ref-image-loaded ? #112211 : Theme.surface;
+                            border-color: root.ref-image-loaded ? Theme.green : Theme.border;
+                            horizontal-stretch: 1;
+                            HorizontalBox {
+                                padding-left: 8px; spacing: 6px; alignment: start;
+                                Text { text: root.ref-image-loaded ? "🟢" : "⚪"; font-size: 12px; vertical-alignment: center; }
+                                Text {
+                                    text: root.ref-image-loaded ? root.ref-image-path : "Sin imagen — solo texto";
+                                    color: root.ref-image-loaded ? Theme.green : Theme.text-dim;
+                                    font-size: 10px; font-weight: root.ref-image-loaded ? 700 : 400;
+                                    vertical-alignment: center; horizontal-stretch: 1; overflow: elide;
+                                }
                             }
                         }
                     }
-
-                    // ── Buttons: Select + Clear ──
                     HorizontalBox {
                         spacing: 8px;
+                        Rectangle { min-width: 110px; horizontal-stretch: 0; }
+                        Button { text: "📂  Seleccionar imagen 1"; min-height: 28px; horizontal-stretch: 1; clicked => { root.browse-ref-image(); } }
+                        Button { text: "🗑"; min-height: 28px; enabled: root.ref-image-loaded; min-width: 40px; horizontal-stretch: 0; clicked => { root.clear-ref-image(); } }
+                    }
 
-                        Button {
-                            text: "📂  Seleccionar imagen";
-                            min-height: 30px;
+                    // ── IMAGEN 2: escena / vehículo ──
+                    HorizontalBox {
+                        spacing: 0px; alignment: start;
+                        Text { text: "Img 2 (escena):"; color: root.ref-image2-loaded ? Theme.cyan : Theme.text-dim; font-size: 10px; font-weight: 700; vertical-alignment: center; min-width: 110px; }
+                        Rectangle {
+                            height: 28px; border-radius: 4px; border-width: 1px;
+                            background: root.ref-image2-loaded ? #111222 : Theme.surface;
+                            border-color: root.ref-image2-loaded ? Theme.cyan : Theme.border;
                             horizontal-stretch: 1;
-                            clicked => { root.browse-ref-image(); }
+                            HorizontalBox {
+                                padding-left: 8px; spacing: 6px; alignment: start;
+                                Text { text: root.ref-image2-loaded ? "🔵" : "⚪"; font-size: 12px; vertical-alignment: center; }
+                                Text {
+                                    text: root.ref-image2-loaded ? root.ref-image2-path : "Opcional — xAI Grok, Flux Kontext Multi, UNO";
+                                    color: root.ref-image2-loaded ? Theme.cyan : Theme.text-dim;
+                                    font-size: 10px; font-weight: root.ref-image2-loaded ? 700 : 400;
+                                    vertical-alignment: center; horizontal-stretch: 1; overflow: elide;
+                                }
+                            }
                         }
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Rectangle { min-width: 110px; horizontal-stretch: 0; }
+                        Button { text: "📂  Seleccionar imagen 2"; min-height: 28px; horizontal-stretch: 1; clicked => { root.browse-ref-image2(); } }
+                        Button { text: "🗑"; min-height: 28px; enabled: root.ref-image2-loaded; min-width: 40px; horizontal-stretch: 0; clicked => { root.clear-ref-image2(); } }
+                    }
 
-                        Button {
-                            text: "🗑  Quitar";
-                            min-height: 30px;
-                            enabled: root.ref-image-loaded;
-                            horizontal-stretch: 0;
-                            min-width: 90px;
-                            clicked => { root.clear-ref-image(); }
+                    // ── IMAGEN 3: extra (multi-ref) ──
+                    HorizontalBox {
+                        spacing: 0px; alignment: start;
+                        Text { text: "Img 3 (extra):"; color: root.ref-image3-loaded ? Theme.purple : Theme.text-dim; font-size: 10px; font-weight: 700; vertical-alignment: center; min-width: 110px; }
+                        Rectangle {
+                            height: 28px; border-radius: 4px; border-width: 1px;
+                            background: root.ref-image3-loaded ? #1a1122 : Theme.surface;
+                            border-color: root.ref-image3-loaded ? Theme.purple : Theme.border;
+                            horizontal-stretch: 1;
+                            HorizontalBox {
+                                padding-left: 8px; spacing: 6px; alignment: start;
+                                Text { text: root.ref-image3-loaded ? "🟣" : "⚪"; font-size: 12px; vertical-alignment: center; }
+                                Text {
+                                    text: root.ref-image3-loaded ? root.ref-image3-path : "★ Solo Flux Kontext Multi / UNO";
+                                    color: root.ref-image3-loaded ? Theme.purple : Theme.text-dim;
+                                    font-size: 10px; font-weight: root.ref-image3-loaded ? 700 : 400;
+                                    vertical-alignment: center; horizontal-stretch: 1; overflow: elide;
+                                }
+                            }
                         }
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Rectangle { min-width: 110px; horizontal-stretch: 0; }
+                        Button { text: "📂  Seleccionar imagen 3"; min-height: 28px; horizontal-stretch: 1; clicked => { root.browse-ref-image3(); } }
+                        Button { text: "🗑"; min-height: 28px; enabled: root.ref-image3-loaded; min-width: 40px; horizontal-stretch: 0; clicked => { root.clear-ref-image3(); } }
+                    }
+
+                    // ── IMAGEN 4: extra (multi-ref) ──
+                    HorizontalBox {
+                        spacing: 0px; alignment: start;
+                        Text { text: "Img 4 (extra):"; color: root.ref-image4-loaded ? Theme.orange : Theme.text-dim; font-size: 10px; font-weight: 700; vertical-alignment: center; min-width: 110px; }
+                        Rectangle {
+                            height: 28px; border-radius: 4px; border-width: 1px;
+                            background: root.ref-image4-loaded ? #1a1208 : Theme.surface;
+                            border-color: root.ref-image4-loaded ? Theme.orange : Theme.border;
+                            horizontal-stretch: 1;
+                            HorizontalBox {
+                                padding-left: 8px; spacing: 6px; alignment: start;
+                                Text { text: root.ref-image4-loaded ? "🟠" : "⚪"; font-size: 12px; vertical-alignment: center; }
+                                Text {
+                                    text: root.ref-image4-loaded ? root.ref-image4-path : "★ Solo Flux Kontext Multi / UNO";
+                                    color: root.ref-image4-loaded ? Theme.orange : Theme.text-dim;
+                                    font-size: 10px; font-weight: root.ref-image4-loaded ? 700 : 400;
+                                    vertical-alignment: center; horizontal-stretch: 1; overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Rectangle { min-width: 110px; horizontal-stretch: 0; }
+                        Button { text: "📂  Seleccionar imagen 4"; min-height: 28px; horizontal-stretch: 1; clicked => { root.browse-ref-image4(); } }
+                        Button { text: "🗑"; min-height: 28px; enabled: root.ref-image4-loaded; min-width: 40px; horizontal-stretch: 0; clicked => { root.clear-ref-image4(); } }
+                    }
+
+                    // ── IMAGEN 5: extra (multi-ref) ──
+                    HorizontalBox {
+                        spacing: 0px; alignment: start;
+                        Text { text: "Img 5 (extra):"; color: root.ref-image5-loaded ? Theme.yellow : Theme.text-dim; font-size: 10px; font-weight: 700; vertical-alignment: center; min-width: 110px; }
+                        Rectangle {
+                            height: 28px; border-radius: 4px; border-width: 1px;
+                            background: root.ref-image5-loaded ? #1a1a08 : Theme.surface;
+                            border-color: root.ref-image5-loaded ? Theme.yellow : Theme.border;
+                            horizontal-stretch: 1;
+                            HorizontalBox {
+                                padding-left: 8px; spacing: 6px; alignment: start;
+                                Text { text: root.ref-image5-loaded ? "🟡" : "⚪"; font-size: 12px; vertical-alignment: center; }
+                                Text {
+                                    text: root.ref-image5-loaded ? root.ref-image5-path : "★ Solo Flux Kontext Multi / UNO";
+                                    color: root.ref-image5-loaded ? Theme.yellow : Theme.text-dim;
+                                    font-size: 10px; font-weight: root.ref-image5-loaded ? 700 : 400;
+                                    vertical-alignment: center; horizontal-stretch: 1; overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Rectangle { min-width: 110px; horizontal-stretch: 0; }
+                        Button { text: "📂  Seleccionar imagen 5"; min-height: 28px; horizontal-stretch: 1; clicked => { root.browse-ref-image5(); } }
+                        Button { text: "🗑"; min-height: 28px; enabled: root.ref-image5-loaded; min-width: 40px; horizontal-stretch: 0; clicked => { root.clear-ref-image5(); } }
                     }
 
                     // ── Mode selector ──
                     HorizontalBox {
-                        spacing: 10px;
-                        alignment: start;
-
+                        spacing: 10px; alignment: start;
                         Text {
-                            text: "Modo Image to Image:";
+                            text: "Modo I2I:";
                             color: root.ref-image-loaded ? Theme.text : Theme.text-dim;
-                            font-size: 11px;
-                            font-weight: 700;
-                            vertical-alignment: center;
-                            min-width: 72px;
+                            font-size: 11px; font-weight: 700; vertical-alignment: center; min-width: 110px;
                         }
                         ComboBox {
                             model: [
@@ -448,8 +561,20 @@ export component MainWindow inherits Window {
 
                     // ── Info note ──
                     Text {
-                        text: (root.ref-image-loaded ? "✅ Imagen activa — se enviará junto al prompt. Randomizer sigue activo." : "⚠ Sin imagen de referencia.");
-                        color: (root.ref-image-loaded ? Theme.green : Theme.yellow);
+                        text: {
+                            if (root.ref-image5-loaded || root.ref-image4-loaded || root.ref-image3-loaded) {
+                                "★ Multi-ref activo — usa Flux Kontext Multi o UNO para aprovechar las 5 imágenes."
+                            } else if (root.ref-image-loaded && root.ref-image2-loaded) {
+                                "✅ 2 imágenes activas — xAI Grok (combina persona+escena) · Flux Kontext Multi / UNO (multi-ref)."
+                            } else if (root.ref-image-loaded) {
+                                "✅ Imagen 1 activa — xAI, OpenAI, WaveSpeed Flux Kontext, WAN. Randomizer sigue activo."
+                            } else {
+                                "ℹ Img 1+2: xAI Grok · Img 1: OpenAI/Flux Kontext/WAN · Imgs 1-5: Flux Kontext Multi / UNO"
+                            }
+                        };
+                        color: (root.ref-image3-loaded || root.ref-image4-loaded || root.ref-image5-loaded) ? Theme.purple
+                             : root.ref-image-loaded ? Theme.green
+                             : Theme.text-dim;
                         font-size: 10px;
                         wrap: word-wrap;
                         horizontal-stretch: 1;
@@ -460,11 +585,8 @@ export component MainWindow inherits Window {
             // ── Configuration ──
             GroupBox {
                 title: "Configuración";
-
                 VerticalBox {
                     spacing: 6px;
-
-                    // Row 1: Model + Interval
                     HorizontalBox {
                         spacing: 12px;
                         Text { text: "Modelo / proveedor:"; color: Theme.text-dim; vertical-alignment: center; }
@@ -475,40 +597,37 @@ export component MainWindow inherits Window {
                             min-width: 180px;
                         }
                         Text { text: "Intervalo:"; color: Theme.text-dim; vertical-alignment: center; }
-                        SpinBox {
-                            value <=> root.interval-secs;
-                            minimum: 10;
-                            maximum: 600;
-                        }
+                        SpinBox { value <=> root.interval-secs; minimum: 10; maximum: 600; }
                         Text { text: "seg"; color: Theme.text-dim; vertical-alignment: center; }
                     }
-
-                    // Row 2: Output folder
                     HorizontalBox {
                         spacing: 8px;
                         Text { text: "Carpeta:"; color: Theme.text-dim; vertical-alignment: center; }
-                        LineEdit {
-                            text <=> root.output-folder;
-                            horizontal-stretch: 1;
-                        }
-                        Button {
-                            text: "📂";
-                            max-width: 40px;
-                            clicked => { root.browse-folder(); }
-                        }
+                        LineEdit { text <=> root.output-folder; horizontal-stretch: 1; }
+                        Button { text: "📂"; max-width: 40px; clicked => { root.browse-folder(); } }
                     }
                 }
             }
 
             // ── Control buttons ──
+            // Row 1: Loop + Burst + Stop
             HorizontalBox {
-                spacing: 10px;
+                spacing: 8px;
                 Button {
-                    text: "▶  Iniciar";
+                    text: "▶  Iniciar Loop";
                     enabled: !root.is-running;
                     min-height: 36px;
                     horizontal-stretch: 1;
                     clicked => { root.start-loop(); }
+                }
+                Button {
+                    text: "⚡⚡ Burst";
+                    enabled: !root.is-running;
+                    min-height: 36px;
+                    horizontal-stretch: 1;
+                    // Highlight burst button with a warm accent
+                    colorize-icon: false;
+                    clicked => { root.start-burst(); }
                 }
                 Button {
                     text: "■  Detener";
@@ -517,19 +636,33 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 1;
                     clicked => { root.stop-loop(); }
                 }
+            }
+            // Row 2: Single generate + info
+            HorizontalBox {
+                spacing: 8px;
                 Button {
                     text: "⚡ Generar 1";
                     enabled: !root.is-running;
-                    min-height: 36px;
+                    min-height: 30px;
                     horizontal-stretch: 1;
                     clicked => { root.single-generate(); }
+                }
+                Rectangle {
+                    horizontal-stretch: 2;
+                    Text {
+                        text: "Loop: espera X seg entre imgs · Burst: continuo sin pausa";
+                        color: Theme.text-dim;
+                        font-size: 9px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
                 }
             }
 
             // ── Progress ──
             VerticalBox {
                 spacing: 4px;
-
                 HorizontalBox {
                     spacing: 10px;
                     ProgressIndicator {
@@ -537,30 +670,10 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                         min-height: 14px;
                     }
-                    Text {
-                        text: root.countdown-text;
-                        color: Theme.accent;
-                        font-size: 15px;
-                        font-weight: 700;
-                        min-width: 55px;
-                        horizontal-alignment: center;
-                    }
-                    Text {
-                        text: root.generation-count;
-                        color: Theme.accent;
-                        font-size: 22px;
-                        font-weight: 700;
-                        min-width: 45px;
-                        horizontal-alignment: center;
-                    }
-                    Text {
-                        text: "imgs";
-                        color: Theme.text-dim;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
+                    Text { text: root.countdown-text; color: Theme.accent; font-size: 15px; font-weight: 700; min-width: 55px; horizontal-alignment: center; }
+                    Text { text: root.generation-count; color: Theme.accent; font-size: 22px; font-weight: 700; min-width: 45px; horizontal-alignment: center; }
+                    Text { text: "imgs"; color: Theme.text-dim; font-size: 11px; vertical-alignment: center; }
                 }
-
                 Text {
                     text: root.progress-label;
                     color: root.progress-label == "Completado" ? Theme.green
@@ -572,7 +685,7 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // ── Log (debug) ──
+            // ── Log ──
             GroupBox {
                 title: "Log";
                 TextEdit {

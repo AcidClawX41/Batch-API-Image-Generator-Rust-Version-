@@ -1,17 +1,22 @@
-//! api.rs — Multi-provider image generation client (v2.2.0).
+//! api.rs — Multi-provider image generation client (v2.4.0).
 //!
 //! Supports:
 //!   • OpenAI-compatible text-to-image (xAI, Google, OpenAI) — single POST, b64_json.
+//!   • xAI Grok Imagine /v1/images/edits — JSON body with `images` array (up to 2 refs).
 //!   • OpenAI /v1/images/edits — multipart form for image-to-image editing.
 //!   • WaveSpeed.ai text-to-image — POST submit (sync mode), download URL.
-//!   • WaveSpeed.ai image-to-image — Flux Kontext only; `image` field as data URI.
+//!   • WaveSpeed.ai image-to-image — dynamic field routing per model family.
 //!
 //! I2I compatibility matrix:
-//!   WaveSpeed Flux Kontext Max/Pro  ✅  (image editing by design)
-//!   WaveSpeed Flux 2 / Kling / etc  ❌  (T2I only, silently ignore image field)
-//!   OpenAI gpt-image-1 / gpt-image-1.5  ✅  (/v1/images/edits multipart)
-//!   OpenAI dall-e-3                 ❌  (edits endpoint not supported)
-//!   xAI / Google                    ❌  (no I2I API)
+//!   xAI grok-imagine-image / quality ✅  (/v1/images/edits JSON, up to 2 images)
+//!   WaveSpeed Flux Kontext Max/Pro/Dev ✅  (`image` singular field)
+//!   WaveSpeed Flux Kontext Max/Pro Multi ✅  (`images` array, up to 5)
+//!   WaveSpeed WAN 2.x                ✅  (`images` array, /image-to-image endpoint)
+//!   WaveSpeed UNO                    ✅  (`images` array)
+//!   WaveSpeed Flux 2 / Kling / etc   ❌  (T2I only)
+//!   OpenAI gpt-image-1 / gpt-image-1.5  ✅  (/v1/images/edits multipart, 1 image)
+//!   OpenAI dall-e-3                  ❌  (edits endpoint not supported)
+//!   Google                           ❌  (no I2I API via this endpoint)
 
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +28,7 @@ pub enum ImageProvider {
     Google,
     OpenAi,
     WaveSpeed,
+    KieAi,
 }
 
 impl ImageProvider {
@@ -32,6 +38,7 @@ impl ImageProvider {
             Self::Google => "Google",
             Self::OpenAi => "OpenAI",
             Self::WaveSpeed => "WaveSpeed",
+            Self::KieAi => "Kie.ai",
         }
     }
 
@@ -41,6 +48,7 @@ impl ImageProvider {
             Self::Google => "google",
             Self::OpenAi => "openai",
             Self::WaveSpeed => "wavespeed",
+            Self::KieAi => "kieai",
         }
     }
 }
@@ -106,6 +114,26 @@ struct ErrorDetail {
     message: Option<String>,
 }
 
+// ─── xAI Grok Imagine image-edits types ──────────────────────────────────────
+
+/// One entry in the `images` array for POST /v1/images/edits.
+#[derive(Serialize)]
+struct XaiImageItem {
+    #[serde(rename = "type")]
+    item_type: String,  // always "image_url"
+    url: String,        // public URL or "data:<mime>;base64,<b64>"
+}
+
+/// Body for xAI /v1/images/edits (JSON, not multipart).
+#[derive(Serialize)]
+struct XaiEditsRequest<'a> {
+    model: &'a str,
+    prompt: &'a str,
+    images: Vec<XaiImageItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aspect_ratio: Option<&'a str>,
+}
+
 // ─── WaveSpeed types ─────────────────────────────────────────────────────────
 
 const WAVESPEED_BASE: &str = "https://api.wavespeed.ai/api/v3";
@@ -120,26 +148,10 @@ struct WaveSpeedRequest<'a> {
     enable_sync_mode: bool,
 }
 
-/// Image-to-image request (includes `image` or `images` as data URI).
-#[derive(Serialize)]
-struct WaveSpeedI2IRequest<'a> {
-    prompt: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    image: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    images: Option<Vec<&'a str>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<&'a str>,
-    seed: i64,
-    enable_sync_mode: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    strength: Option<f32>,
-}
-
 #[derive(Deserialize)]
 struct WaveSpeedResponse {
     #[allow(dead_code)]
-    code: Option<i32>,      // HTTP-level status code in the body; not used directly
+    code: Option<i32>,
     message: Option<String>,
     data: Option<WaveSpeedData>,
 }
@@ -162,27 +174,23 @@ pub struct GenerationResult {
 
 // ─── I2I model compatibility ─────────────────────────────────────────────────
 
-/// Returns true only for WaveSpeed models that genuinely support image conditioning.
-/// All other WaveSpeed endpoints are text-to-image only and silently ignore `image`.
-///
-/// Confirmed I2I support:
-///   • flux-kontext — designed for image editing (Flux Kontext Max/Pro)
-///   • nano-banana  — Google Imagen via WaveSpeed; accepts image conditioning
-/// Returns true for OpenAI models that support /v1/images/edits.
-// Permitimos que todos los modelos intenten la generación con imagen de referencia,
-// en lugar de bloquear artificialmente en el cliente. Si un modelo no existe o falla,
-// la API de WaveSpeed devolverá el error apropiadamente.
 fn wavespeed_supports_i2i(_model: &str) -> bool {
     true
 }
 
-/// Returns true for OpenAI models that support /v1/images/edits.
 fn openai_supports_i2i(model: &str) -> bool {
     model.starts_with("gpt-image-")
 }
 
+fn xai_supports_i2i(model: &str) -> bool {
+    model.starts_with("grok-imagine")
+}
+
+fn xai_edit_model(_model: &str) -> &'static str {
+    "grok-imagine-image-quality"
+}
+
 /// Derive MIME type from file extension (lowercase).
-/// Falls back to "image/png" for unknown types.
 pub fn mime_from_ext(ext: &str) -> &'static str {
     match ext.to_ascii_lowercase().trim_start_matches('.') {
         "jpg" | "jpeg" => "image/jpeg",
@@ -196,19 +204,21 @@ pub fn mime_from_ext(ext: &str) -> &'static str {
 
 /// Generate an image and save it to disk.
 ///
-/// * `ref_image_b64` — raw Base64-encoded reference image bytes (no data-URI header).
-///   Pass `None` for text-to-image mode.
-/// * `ref_mime` — MIME type of the reference image (e.g. `"image/webp"`).
-///   Ignored when `ref_image_b64` is `None`.
-/// * `i2i_mode` — `StyleReference` or `DirectEdit`; ignored when `ref_image_b64` is `None`.
+/// * `ref_images` — Slice of (base64_string, mime_string) pairs.
+///   Index 0 = persona/primary, 1 = escena/secondary, 2-4 = extra refs.
+///   - xAI Grok Imagine uses up to 2.
+///   - WaveSpeed Flux Kontext single uses 1 (`image` field).
+///   - WaveSpeed Flux Kontext Multi / UNO / WAN use all provided (`images` array).
+///   - OpenAI uses only the first.
+///   Pass an empty slice for text-to-image mode.
+/// * `i2i_mode` — `StyleReference` or `DirectEdit`; ignored in T2I mode.
 pub async fn generate_image(
     provider: ImageProvider,
     api_key: &str,
     prompt: &str,
     model: &str,
     output_dir: &str,
-    ref_image_b64: Option<&str>,
-    ref_mime: &str,
+    ref_images: &[(String, String)],
     i2i_mode: I2iMode,
 ) -> Result<GenerationResult, String> {
     let api_key = api_key.trim();
@@ -223,28 +233,30 @@ pub async fn generate_image(
 
     std::fs::create_dir_all(output_dir).map_err(|e| format!("Error creando carpeta: {}", e))?;
 
-    match (provider, ref_image_b64) {
-        // ── WaveSpeed with reference image ──────────────────────────────────
-        (ImageProvider::WaveSpeed, Some(b64)) => {
+    let has_refs = !ref_images.is_empty();
+
+    match (provider, has_refs) {
+        // ── WaveSpeed with reference image(s) ──────────────────────────────
+        (ImageProvider::WaveSpeed, true) => {
             if !wavespeed_supports_i2i(model) {
                 return Err(format!(
                     "❌ El modelo «{}» es texto→imagen puro y no soporta imagen de referencia.\n\
                      Para Image-to-Image en WaveSpeed usa:\n\
-                     • Flux Kontext Max  (edición precisa)\n\
-                     • Flux Kontext Pro  (edición precisa)\n\
-                     • Nano Banana 2     (estilo + composición)\n\
-                     • Nano Banana Pro   (estilo + composición)",
+                     • Flux Kontext Max/Pro/Dev      (edición precisa, 1 img)\n\
+                     • Flux Kontext Max/Pro Multi    (hasta 5 imgs)\n\
+                     • WAN 2.2 / WAN 2.6             (imagen→imagen)\n\
+                     • UNO                           (multi-referencia)",
                     model
                 ));
             }
-            generate_wavespeed_i2i(api_key, prompt, model, output_dir, b64, ref_mime, i2i_mode).await
+            generate_wavespeed_i2i(api_key, prompt, model, output_dir, ref_images, i2i_mode).await
         }
         // ── WaveSpeed text-to-image ─────────────────────────────────────────
-        (ImageProvider::WaveSpeed, None) => {
+        (ImageProvider::WaveSpeed, false) => {
             generate_wavespeed(api_key, prompt, model, output_dir).await
         }
-        // ── OpenAI with reference image ─────────────────────────────────────
-        (ImageProvider::OpenAi, Some(b64)) => {
+        // ── OpenAI with reference image (uses first only) ───────────────────
+        (ImageProvider::OpenAi, true) => {
             if !openai_supports_i2i(model) {
                 return Err(format!(
                     "❌ El modelo «{}» no soporta edición de imagen.\n\
@@ -252,22 +264,41 @@ pub async fn generate_image(
                     model
                 ));
             }
-            generate_openai_edit(api_key, prompt, model, output_dir, b64, ref_mime).await
+            let (b64, mime) = &ref_images[0];
+            generate_openai_edit(api_key, prompt, model, output_dir, b64, mime).await
         }
-        // ── xAI with reference image (not supported natively) ───────────────
-        (ImageProvider::Xai, Some(_)) => {
-            Err("❌ xAI no soporta Image-to-Image por API directa.\n\
-                 Usa WaveSpeed (Flux Kontext) o OpenAI (gpt-image-1) para edición de imagen."
+        // ── xAI with reference image(s) → Grok Imagine /v1/images/edits ───
+        (ImageProvider::Xai, true) => {
+            if !xai_supports_i2i(model) {
+                return Err(format!(
+                    "❌ El modelo «{}» no soporta edición de imagen.\n\
+                     Para Image-to-Image en xAI usa: grok-imagine-image o grok-imagine-image-quality",
+                    model
+                ));
+            }
+            let (b64_1, mime_1) = &ref_images[0];
+            let img2 = ref_images.get(1);
+            generate_xai_edit(
+                api_key, prompt, model, output_dir,
+                b64_1, mime_1,
+                img2.map(|(b, _)| b.as_str()),
+                img2.map(|(_, m)| m.as_str()).unwrap_or("image/png"),
+            ).await
+        }
+        // ── Google with reference image (not supported) ─────────────────────
+        (ImageProvider::Google, true) => {
+            Err("❌ Google Gemini Image no soporta Image-to-Image por esta API.\n\
+                 Usa xAI Grok Imagine, WaveSpeed (Flux Kontext) o OpenAI (gpt-image-1)."
                 .to_string())
         }
-        // ── Google with reference image (not supported in this endpoint) ─────
-        (ImageProvider::Google, Some(_)) => {
-            Err("❌ Google Gemini Image no soporta Image-to-Image por esta API.\n\
-                 Usa WaveSpeed (Flux Kontext) o OpenAI (gpt-image-1) para edición de imagen."
+        // ── Kie.ai with reference image (not supported) ─────────────────────
+        (ImageProvider::KieAi, true) => {
+            Err("❌ Kie.ai no soporta Image-to-Image.\n\
+                 Usa xAI Grok Imagine, WaveSpeed (Flux Kontext) o OpenAI (gpt-image-1)."
                 .to_string())
         }
         // ── All other providers: standard text-to-image ─────────────────────
-        (_, None) => {
+        (_, false) => {
             generate_openai_compat(provider, api_key, prompt, model, output_dir).await
         }
     }
@@ -329,7 +360,6 @@ async fn generate_openai_compat(
         .ok_or_else(|| format!("{} no devolvió imágenes.", provider.display_name()))?;
     let first = images.first().ok_or("Lista de imágenes vacía.")?;
 
-    // Prefer b64_json, fall back to URL download
     if let Some(b64) = first.b64_json.as_deref() {
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
             .map_err(|e| format!("Error decodificando base64: {}", e))?;
@@ -351,7 +381,6 @@ async fn generate_openai_edit(
     ref_image_b64: &str,
     ref_mime: &str,
 ) -> Result<GenerationResult, String> {
-    // Decode b64 → raw bytes for the multipart upload
     let image_bytes = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         ref_image_b64,
@@ -360,7 +389,6 @@ async fn generate_openai_edit(
 
     let client = reqwest::Client::new();
 
-    // Derive a sensible filename from the MIME type
     let fname = match ref_mime {
         "image/jpeg" => "reference.jpg",
         "image/webp" => "reference.webp",
@@ -368,7 +396,6 @@ async fn generate_openai_edit(
         _            => "reference.png",
     };
 
-    // Build multipart/form-data body
     let image_part = reqwest::multipart::Part::bytes(image_bytes)
         .file_name(fname)
         .mime_str(ref_mime)
@@ -418,6 +445,84 @@ async fn generate_openai_edit(
     }
 }
 
+// ─── xAI Grok Imagine /v1/images/edits (image-to-image, 1–2 refs) ────────────
+
+async fn generate_xai_edit(
+    api_key: &str,
+    prompt: &str,
+    model: &str,
+    output_dir: &str,
+    ref_image_b64: &str,
+    ref_mime: &str,
+    ref_image2_b64: Option<&str>,
+    ref_mime2: &str,
+) -> Result<GenerationResult, String> {
+    let client = reqwest::Client::new();
+    let edit_model = xai_edit_model(model);
+
+    let data_uri1 = format!("data:{};base64,{}", ref_mime, ref_image_b64);
+    let mut images: Vec<XaiImageItem> = vec![
+        XaiImageItem { item_type: "image_url".to_string(), url: data_uri1 },
+    ];
+
+    if let Some(b64_2) = ref_image2_b64 {
+        let data_uri2 = format!("data:{};base64,{}", ref_mime2, b64_2);
+        images.push(XaiImageItem { item_type: "image_url".to_string(), url: data_uri2 });
+    }
+
+    let num_images = images.len();
+    let request = XaiEditsRequest {
+        model: edit_model,
+        prompt,
+        images,
+        aspect_ratio: Some("16:9"),
+    };
+
+    let resp = client
+        .post("https://api.x.ai/v1/images/edits")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&request)
+        .timeout(std::time::Duration::from_secs(180))
+        .send()
+        .await
+        .map_err(|e| format_reqwest_error(ImageProvider::Xai, e))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let msg = serde_json::from_str::<ErrorResponse>(&body)
+            .ok()
+            .and_then(|e| e.error)
+            .and_then(|e| e.message)
+            .unwrap_or(body);
+        return Err(format!(
+            "xAI Grok Imagine edits ({} ref{}) devolvió HTTP {}: {}",
+            num_images,
+            if num_images == 1 { "" } else { "s" },
+            status.as_u16(),
+            msg
+        ));
+    }
+
+    let data: OpenAiResponse = resp.json().await.map_err(|e| {
+        format!("Error parseando respuesta de xAI Grok edits: {}", e)
+    })?;
+
+    let images_resp = data.data.ok_or("xAI Grok no devolvió imágenes.")?;
+    let first = images_resp.first().ok_or("Lista de imágenes vacía.")?;
+
+    if let Some(b64) = first.b64_json.as_deref() {
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+            .map_err(|e| format!("Error decodificando base64 de xAI edits: {}", e))?;
+        save_image(ImageProvider::Xai, &bytes, output_dir, "png")
+    } else if let Some(url) = first.url.as_deref() {
+        download_and_save_for(ImageProvider::Xai, url, output_dir).await
+    } else {
+        Err("Sin datos base64 ni URL en la respuesta de xAI Grok edits.".to_string())
+    }
+}
+
 // ─── WaveSpeed text-to-image flow ────────────────────────────────────────────
 
 async fn generate_wavespeed(
@@ -428,7 +533,6 @@ async fn generate_wavespeed(
 ) -> Result<GenerationResult, String> {
     let client = reqwest::Client::new();
     let url = format!("{}/{}", WAVESPEED_BASE, model);
-
     let size = wavespeed_default_size(model);
 
     let request = WaveSpeedRequest {
@@ -463,90 +567,142 @@ async fn generate_wavespeed(
 }
 
 // ─── WaveSpeed image-to-image flow ───────────────────────────────────────────
+//
+// Field routing per model family:
+//
+//   Flux Kontext single (max/pro/dev)  → `image`  (singular data URI)
+//   Flux Kontext /multi                → `images` (array, up to 5)
+//   WAN family                         → `images` (array, /image-to-image endpoint)
+//   UNO                                → `images` (array)
+//   /edit, /image-edit endpoints       → `images` (array)
+//   /image-to-image endpoints          → `images` (array)
+//   Everything else                    → `image`  (singular)
 
 async fn generate_wavespeed_i2i(
     api_key: &str,
     prompt: &str,
     model: &str,
     output_dir: &str,
-    ref_image_b64: &str,
-    ref_mime: &str,
+    ref_images: &[(String, String)],
     i2i_mode: I2iMode,
 ) -> Result<GenerationResult, String> {
     let client = reqwest::Client::new();
-    
-    // Cambiar la terminación del modelo para apuntar al endpoint de Image-to-Image / Edit
+
     let base_model = model.strip_suffix("/text-to-image").unwrap_or(model);
-    
-    let actual_model = if base_model.contains("wan") {
-        format!("{}/image-edit", base_model)
-    } else if base_model.contains("flux-kontext") {
-        // Flux Kontext is natively an editing model, no suffix needed
+
+    // ── Derive the actual I2I endpoint ──────────────────────────────────────
+    let actual_model = if base_model.ends_with("/image-to-image")
+        || base_model.ends_with("/image-edit")
+        || base_model.ends_with("/multi")
+        || base_model.ends_with("/edit")
+        || base_model.ends_with("/edit-fast")
+    {
+        // Already an I2I / edit / multi endpoint — use as-is.
+        // e.g. wan-2.2/image-to-image, flux-kontext-max/multi,
+        //      nano-banana-2/edit, seedream-v5.0-lite/edit, wan-2.7/image-edit
+        base_model.to_string()
+    } else if base_model.contains("wan-2.6") {
+        // WAN 2.6 has NO I2I endpoint — tell the user to use WAN 2.7
+        return Err(format!(
+            "El modelo 'alibaba/wan-2.6' no tiene endpoint Image-to-Image.              Usa 'alibaba/wan-2.7/image-edit' para I2I."
+        ));
+    } else if base_model.contains("wan") {
+        // WAN 2.7+ text-to-image base → I2I endpoint
+        format!("{}/image-to-image", base_model)
+    } else if base_model.contains("flux-kontext") || base_model.contains("uno") {
+        // Flux Kontext and UNO are natively editing models — no suffix needed
         base_model.to_string()
     } else if base_model.contains("flux") {
         format!("{}/image-to-image", base_model)
     } else {
-        // Modelos como Seedream, Nano-Banana y Qwen usan el endpoint /edit
         format!("{}/edit", base_model)
     };
-    
-    let url = format!("{}/{}", WAVESPEED_BASE, actual_model);
 
+    let url = format!("{}/{}", WAVESPEED_BASE, actual_model);
     let size = wavespeed_default_size(model);
 
-    // Build the data URI with the actual MIME type of the uploaded file
-    let data_uri = format!("data:{};base64,{}", ref_mime, ref_image_b64);
+    // Build data URIs for all reference images
+    let data_uris: Vec<String> = ref_images
+        .iter()
+        .map(|(b64, mime)| format!("data:{};base64,{}", mime, b64))
+        .collect();
 
-    // strength: how much the reference image influences the output.
-    // DirectEdit → 0.85 (strong adherence to reference image structure)
-    // StyleReference → 0.55 (looser, prompt drives content more)
     let strength = match i2i_mode {
-        I2iMode::DirectEdit => 0.85_f32,
+        I2iMode::DirectEdit     => 0.85_f32,
         I2iMode::StyleReference => 0.55_f32,
     };
 
-    let (image_val, images_val) = if actual_model.ends_with("/edit") || actual_model.contains("kontext") {
-        (None, Some(vec![data_uri.as_str()]))
-    } else {
-        (Some(data_uri.as_str()), None)
-    };
+    // ── Field routing ───────────────────────────────────────────────────────
+    // Flux Kontext single: `image` (singular)
+    // Everything with /multi, /wan, /edit, /image-edit, /image-to-image, or UNO: `images` (array)
+    let is_kontext_single = actual_model.contains("kontext") && !actual_model.ends_with("/multi");
 
-    let request = WaveSpeedI2IRequest {
-        prompt,
-        image: image_val,
-        images: images_val,
-        size: Some(size),
-        seed: -1,
-        enable_sync_mode: true,
-        strength: Some(strength),
-    };
+    // Grok Edit uses xAI's images/edits format → `image` singular (not an array)
+    let is_grok_edit = actual_model.contains("grok");
+
+    let needs_images_array = !is_kontext_single
+        && !is_grok_edit
+        && (actual_model.ends_with("/multi")
+            || actual_model.contains("/wan")
+            || actual_model.contains("uno")
+            || actual_model.ends_with("/edit")
+            || actual_model.ends_with("/edit-fast")   // ← was missing
+            || actual_model.ends_with("/image-edit")
+            || actual_model.ends_with("/image-to-image"));
+
+    // ── Build JSON body dynamically ─────────────────────────────────────────
+    let mut body = serde_json::json!({
+        "prompt": prompt,
+        "size": size,
+        "seed": -1_i64,
+        "enable_sync_mode": true,
+        "strength": strength,
+    });
+
+    if is_kontext_single || is_grok_edit {
+        // `image`: single data URI (first reference only)
+        // - Flux Kontext single: expects `image` not `images`
+        // - Grok Edit: mirrors xAI images/edits API, expects `image` singular
+        if let Some(uri) = data_uris.first() {
+            body["image"] = serde_json::Value::String(uri.clone());
+        }
+    } else if needs_images_array {
+        // `images`: array of data URIs (all references, up to model's limit)
+        body["images"] = serde_json::json!(data_uris);
+    } else {
+        // Fallback: treat as `image` singular
+        if let Some(uri) = data_uris.first() {
+            body["image"] = serde_json::Value::String(uri.clone());
+        }
+    }
 
     let resp = client
         .post(&url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .json(&request)
+        .json(&body)
         .timeout(std::time::Duration::from_secs(180))
         .send()
         .await
         .map_err(|e| format_reqwest_error(ImageProvider::WaveSpeed, e))?;
 
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    let body_str = resp.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        let msg = serde_json::from_str::<WaveSpeedResponse>(&body)
+        let msg = serde_json::from_str::<WaveSpeedResponse>(&body_str)
             .ok()
             .and_then(|r| r.message)
-            .unwrap_or(body);
-            
+            .unwrap_or_else(|| body_str.clone());
+
         if status.as_u16() == 400 && msg.contains("model not found") {
             return Err(format!(
-                "❌ WaveSpeed no ofrece Endpoint Image-to-Image para '{}'.\nLa API no encuentra el modelo {}. (Si usas el base ignorará la imagen). Usa Flux Kontext o Wan.",
-                base_model, actual_model
+                "❌ WaveSpeed no encuentra el modelo I2I '{}'.\n\
+                 Usa Flux Kontext (Max/Pro/Dev) o WAN 2.2 para Image-to-Image.",
+                actual_model
             ));
         }
-            
+
         return Err(format!(
             "WaveSpeed I2I devolvió HTTP {}: {}",
             status.as_u16(),
@@ -554,7 +710,7 @@ async fn generate_wavespeed_i2i(
         ));
     }
 
-    handle_wavespeed_response(&client, api_key, &body, output_dir).await
+    handle_wavespeed_response(&client, api_key, &body_str, output_dir).await
 }
 
 // ─── WaveSpeed shared response handler ───────────────────────────────────────
@@ -573,7 +729,6 @@ async fn handle_wavespeed_response(
         )
     })?;
 
-    // Check for API-level errors
     if let Some(ref data) = ws_resp.data {
         if let Some(ref err) = data.error {
             if !err.is_empty() {
@@ -591,14 +746,12 @@ async fn handle_wavespeed_response(
 
     let data = ws_resp.data.ok_or("WaveSpeed no devolvió datos.")?;
 
-    // Sync mode completed immediately
     if data.status.as_deref() == Some("completed") {
         let outputs = data.outputs.ok_or("WaveSpeed completó pero sin outputs.")?;
         let image_url = outputs.first().ok_or("Lista de outputs vacía.")?;
         return download_and_save_for(ImageProvider::WaveSpeed, image_url, output_dir).await;
     }
 
-    // Not yet done → fall back to polling
     if let Some(task_id) = data.id.as_deref() {
         return poll_wavespeed(client, api_key, task_id, output_dir).await;
     }
@@ -618,7 +771,7 @@ async fn poll_wavespeed(
     output_dir: &str,
 ) -> Result<GenerationResult, String> {
     let poll_url = format!("{}/predictions/{}/result", WAVESPEED_BASE, task_id);
-    let max_polls = 180; // ~3 minutes at 1s intervals
+    let max_polls = 180;
 
     for _ in 0..max_polls {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -670,9 +823,7 @@ async fn poll_wavespeed(
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-/// Choose the right output resolution for WaveSpeed models.
 fn wavespeed_default_size(model: &str) -> &'static str {
-    // ByteDance models require ≥ 3 686 400 px (1920×1920 = 3 686 400)
     if model.contains("seedream") || model.contains("dreamina") {
         "1920*1920"
     } else {
@@ -680,7 +831,6 @@ fn wavespeed_default_size(model: &str) -> &'static str {
     }
 }
 
-/// Download an image from a CDN URL and save it to disk under the given provider prefix.
 async fn download_and_save_for(
     provider: ImageProvider,
     url: &str,

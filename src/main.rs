@@ -1,8 +1,10 @@
 #![windows_subsystem = "windows"]
-//! main.rs — Batch Image Generator v2.2.0 (Rust + Slint)
+//! main.rs — Batch Image Generator v2.4.0 (Rust + Slint)
 //!
 //! Entry point. Wires up the Slint UI with the async API client,
 //! randomizer, countdown timer logic, and Image-to-Image conditioning.
+//! Supports up to 5 reference images for multi-ref models
+//! (Flux Kontext Multi, UNO).
 
 mod api;
 mod pools;
@@ -21,11 +23,38 @@ struct AppState {
     running: bool,
     seconds_left: i32,
     interval: i32,
-    /// Base64-encoded reference image (raw bytes, no data-URI header).
-    /// None = text-to-image mode.
-    ref_image_b64: Option<String>,
-    /// MIME type of the loaded reference image (e.g. "image/webp", "image/jpeg").
-    ref_image_mime: String,
+    /// True when burst mode is active (generate continuously with no delay).
+    burst_mode: bool,
+    /// Reference images: Vec of (base64_string, mime_string).
+    /// Index 0 = persona/primary, 1 = escena/secondary, 2-4 = extra refs.
+    /// An empty base64 string means that slot is not loaded.
+    ref_images: Vec<(String, String)>,
+}
+
+impl AppState {
+    /// Returns only the images that are actually loaded (non-empty b64).
+    fn active_ref_images(&self) -> Vec<(String, String)> {
+        self.ref_images
+            .iter()
+            .filter(|(b64, _)| !b64.is_empty())
+            .cloned()
+            .collect()
+    }
+
+    /// Set a reference image at a given slot index.
+    fn set_ref_image(&mut self, index: usize, b64: String, mime: String) {
+        while self.ref_images.len() <= index {
+            self.ref_images.push((String::new(), "image/png".to_string()));
+        }
+        self.ref_images[index] = (b64, mime);
+    }
+
+    /// Clear a reference image at a given slot index.
+    fn clear_ref_image(&mut self, index: usize) {
+        if index < self.ref_images.len() {
+            self.ref_images[index] = (String::new(), "image/png".to_string());
+        }
+    }
 }
 
 struct ModelCatalogEntry {
@@ -35,117 +64,66 @@ struct ModelCatalogEntry {
 
 const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     // ── xAI ──
-    ModelCatalogEntry {
-        provider: ImageProvider::Xai,
-        model: "grok-imagine-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::Xai,
-        model: "grok-imagine-image-pro",
-    },
+    ModelCatalogEntry { provider: ImageProvider::Xai,       model: "grok-imagine-image" },
+    ModelCatalogEntry { provider: ImageProvider::Xai,       model: "grok-imagine-image-pro" },
     // ── Google ──
-    ModelCatalogEntry {
-        provider: ImageProvider::Google,
-        model: "gemini-2.5-flash-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::Google,
-        model: "gemini-3-pro-image-preview",
-    },
+    ModelCatalogEntry { provider: ImageProvider::Google,    model: "gemini-2.5-flash-image" },
+    ModelCatalogEntry { provider: ImageProvider::Google,    model: "gemini-3-pro-image-preview" },
     // ── OpenAI ──
-    ModelCatalogEntry {
-        provider: ImageProvider::OpenAi,
-        model: "gpt-image-1.5",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::OpenAi,
-        model: "gpt-image-1",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::OpenAi,
-        model: "gpt-image-1-mini",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::OpenAi,
-        model: "dall-e-3",
-    },
-    // ── WaveSpeed: Flux 2 family ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "wavespeed-ai/flux-2-max/text-to-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "wavespeed-ai/flux-2-dev/text-to-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "wavespeed-ai/flux-2-flash/text-to-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "wavespeed-ai/flux-2-flex/text-to-image",
-    },
-    // ── WaveSpeed: Flux Kontext ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "wavespeed-ai/flux-kontext-max/text-to-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "wavespeed-ai/flux-kontext-pro/text-to-image",
-    },
+    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "gpt-image-1.5" },
+    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "gpt-image-1" },
+    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "gpt-image-1-mini" },
+    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "dall-e-3" },
+    // ── WaveSpeed: Flux 2 family (T2I only) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-max/text-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-dev/text-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-flash/text-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-flex/text-to-image" },
+    // ── WaveSpeed: Flux Kontext single (1 img ref) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-max/text-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-pro/text-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-dev" },
+    // ── WaveSpeed: Flux Kontext Multi (up to 5 imgs ref) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-max/multi" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-pro/multi" },
+    // ── WaveSpeed: WAN (I2I) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/wan-2.2/image-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "alibaba/wan-2.6/text-to-image" },
+    // ── WaveSpeed: UNO (multi-ref) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/uno" },
     // ── WaveSpeed: Seedream (ByteDance) ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "bytedance/seedream-v5.0-lite",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "bytedance/seedream-v4.5",
-    },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v5.0-lite" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v4.5" },
     // ── WaveSpeed: Nano Banana (Google via WaveSpeed) ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "google/nano-banana-2/text-to-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "google/nano-banana-pro/text-to-image",
-    },
-    // ── WaveSpeed: WAN (Alibaba) ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "alibaba/wan-2.6/text-to-image",
-    },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-2/text-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-pro/text-to-image" },
     // ── WaveSpeed: Dreamina (ByteDance) ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "bytedance/dreamina-v3.1/text-to-image",
-    },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/dreamina-v3.1/text-to-image" },
     // ── WaveSpeed: Qwen Image (Alibaba) ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "wavespeed-ai/qwen-image-2.0-pro/text-to-image",
-    },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/qwen-image-2.0-pro/text-to-image" },
     // ── WaveSpeed: Kling (Kuaishou) ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "kwaivgi/kling-image-o3/text-to-image",
-    },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "kwaivgi/kling-image-o3/text-to-image" },
     // ── WaveSpeed: Grok (xAI via WaveSpeed) ──
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "x-ai/grok-2-image",
-    },
-    ModelCatalogEntry {
-        provider: ImageProvider::WaveSpeed,
-        model: "x-ai/grok-imagine-image-text-to-image",
-    },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "x-ai/grok-2-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "x-ai/grok-imagine-image-text-to-image" },
+    // ── WaveSpeed: Grok Imagine Edit (I2I nativo) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "x-ai/grok-imagine-image/edit" },
+    // ── WaveSpeed: Nano Banana Edit (hasta 14 imgs) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-2/edit" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-2/edit-fast" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-pro/edit" },
+    // ── WaveSpeed: Seedream Edit ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v5.0-lite/edit" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v4.5/edit" },
+    // ── WaveSpeed: Qwen Image Edit ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/qwen-image/edit" },
+    // ── WaveSpeed: Flux 2 Klein Edit ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-klein-4b/edit" },
+    // ── WaveSpeed: WAN 2.7 Image Edit ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "alibaba/wan-2.7/image-edit" },
 ];
 
 fn main() {
-    // On macOS, prefer femtovg backend to work around click issues on Tahoe+.
     #[cfg(target_os = "macos")]
     {
         if std::env::var("SLINT_BACKEND").is_err() {
@@ -155,7 +133,6 @@ fn main() {
 
     let app = MainWindow::new().unwrap();
 
-    // Set default output folder
     if let Some(home) = dirs::home_dir() {
         let default_folder = home.join("batch_images").to_string_lossy().to_string();
         app.set_output_folder(default_folder.into());
@@ -163,13 +140,12 @@ fn main() {
 
     let state = Arc::new(Mutex::new(AppState {
         running: false,
+        burst_mode: false,
         seconds_left: 0,
         interval: 60,
-        ref_image_b64: None,
-        ref_image_mime: "image/png".to_string(),
+        ref_images: Vec::new(),
     }));
 
-    // Tokio runtime for async HTTP requests
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -202,7 +178,6 @@ fn main() {
             let mode = app.get_current_mode();
 
             if mode == 0 {
-                // Mode A
                 let base = app.get_prompt_base().to_string();
                 if app.get_rand_active() {
                     let opts = ModifyOptions {
@@ -235,7 +210,6 @@ fn main() {
                     base
                 }
             } else {
-                // Mode B
                 let theme_idx = app.get_theme_index() as usize;
                 let curated = app.get_chk_curated();
                 if app.get_chk_auto_b() {
@@ -270,7 +244,6 @@ fn main() {
             let model_idx = app.get_model_index() as usize;
             let selected_model = MODEL_CATALOG.get(model_idx).unwrap_or(&MODEL_CATALOG[0]);
 
-            // Pick the right API key based on the provider
             let api_key = if selected_model.provider == ImageProvider::WaveSpeed {
                 app.get_wavespeed_api_key().to_string()
             } else {
@@ -280,12 +253,12 @@ fn main() {
             let model = selected_model.model.to_string();
             let output_dir = app.get_output_folder().to_string();
 
-            // ── I2I: read ref image, MIME, and mode from shared state / UI ──
-            let (ref_image_b64, ref_image_mime): (Option<String>, String) = {
+            // Collect active reference images from shared state
+            let ref_images: Vec<(String, String)> = {
                 let st = state.lock().unwrap();
-                (st.ref_image_b64.clone(), st.ref_image_mime.clone())
+                st.active_ref_images()
             };
-            // i2i_mode_index: 0 = StyleReference, 1 = DirectEdit
+
             let i2i_mode = if app.get_i2i_mode_index() == 1 {
                 I2iMode::DirectEdit
             } else {
@@ -299,21 +272,23 @@ fn main() {
             let log2 = log.clone();
             let state2 = state.clone();
 
-            // ── Detailed debug log ──
             log(&format!("Proveedor: {}", provider.display_name()), "INFO");
             log(&format!("Modelo: {}", model), "INFO");
             log(&format!("Carpeta: {}", output_dir), "INFO");
 
-            if let Some(ref _b64) = ref_image_b64 {
+            if !ref_images.is_empty() {
                 let mode_str = match i2i_mode {
                     I2iMode::StyleReference => "Referencia de Estilo",
-                    I2iMode::DirectEdit => "Edición Directa",
+                    I2iMode::DirectEdit     => "Edición Directa",
                 };
-                log(&format!("🖼 Image-to-Image: ACTIVO (modo: {})", mode_str), "I2I");
+                log(&format!(
+                    "🖼 Image-to-Image: ACTIVO ({} imagen{} · {})",
+                    ref_images.len(),
+                    if ref_images.len() == 1 { "" } else { "es" },
+                    mode_str
+                ), "I2I");
             }
 
-            // Show base prompt vs full prompt so the user can verify the
-            // randomizer is properly mixing both.
             let base_prompt = app.get_prompt_base().to_string();
             if !base_prompt.trim().is_empty() {
                 let base_preview = if base_prompt.len() > 100 {
@@ -329,30 +304,22 @@ fn main() {
             } else {
                 prompt.clone()
             };
-            log(
-                &format!("📝 Prompt final ({}ch): {}", prompt.len(), prompt_preview),
-                "INFO",
-            );
+            log(&format!("📝 Prompt final ({}ch): {}", prompt.len(), prompt_preview), "INFO");
 
             if app.get_rand_active() {
                 log("🎲 Randomizer: ACTIVO", "RAND");
             }
 
-            log(
-                &format!("Enviando petición a {} API...", provider.display_name()),
-                "INFO",
-            );
+            log(&format!("Enviando petición a {} API...", provider.display_name()), "INFO");
 
             rt.spawn(async move {
-                let ref_b64_ref = ref_image_b64.as_deref();
                 let result = api::generate_image(
                     provider,
                     &api_key,
                     &prompt,
                     &model,
                     &output_dir,
-                    ref_b64_ref,
-                    &ref_image_mime,
+                    &ref_images,
                     i2i_mode,
                 )
                 .await;
@@ -367,36 +334,32 @@ fn main() {
                                 app.set_generation_count(count);
                                 app.set_progress_value(1.0);
                                 app.set_progress_label("Completado".into());
-                                log2(
-                                    &format!(
-                                        "✅ Imagen #{} guardada: {} ({})",
-                                        count, gen.filepath, gen.filename
-                                    ),
-                                    "OK",
-                                );
+                                log2(&format!(
+                                    "✅ Imagen #{} guardada: {} ({})",
+                                    count, gen.filepath, gen.filename
+                                ), "OK");
 
-                                // Kick off countdown for next generation
                                 let mut st = state2.lock().unwrap();
                                 if st.running {
-                                    st.seconds_left = st.interval;
-                                    let secs = st.interval;
-                                    drop(st);
-                                    let mins = secs / 60;
-                                    let s = secs % 60;
-                                    app.set_countdown_text(
-                                        format!("{:02}:{:02}", mins, s).into(),
-                                    );
-                                    app.set_progress_value(1.0);
-                                    app.set_progress_label(
-                                        format!("Siguiente en {}s", secs).into(),
-                                    );
-                                    log2(
-                                        &format!(
-                                            "⏱ Cuenta atrás: {}s hasta la siguiente.",
-                                            secs
-                                        ),
-                                        "INFO",
-                                    );
+                                    if st.burst_mode {
+                                        // Burst: fire next generation immediately (next timer tick)
+                                        st.seconds_left = 0;
+                                        drop(st);
+                                        app.set_countdown_text("⚡".into());
+                                        app.set_progress_value(1.0);
+                                        app.set_progress_label("Burst — siguiente...".into());
+                                        log2(&format!("⚡ Burst #{} completado — disparando siguiente.", count), "BURST");
+                                    } else {
+                                        st.seconds_left = st.interval;
+                                        let secs = st.interval;
+                                        drop(st);
+                                        let mins = secs / 60;
+                                        let s = secs % 60;
+                                        app.set_countdown_text(format!("{:02}:{:02}", mins, s).into());
+                                        app.set_progress_value(1.0);
+                                        app.set_progress_label(format!("Siguiente en {}s", secs).into());
+                                        log2(&format!("⏱ Cuenta atrás: {}s hasta la siguiente.", secs), "INFO");
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -404,13 +367,19 @@ fn main() {
                                 app.set_progress_label("Error".into());
                                 log2(&format!("❌ {}", e), "ERROR");
 
-                                // Even on error, restart countdown if loop is running
                                 let mut st = state2.lock().unwrap();
                                 if st.running {
-                                    st.seconds_left = st.interval;
-                                    let secs = st.interval;
-                                    drop(st);
-                                    log2(&format!("⏱ Reintentando en {}s...", secs), "WARN");
+                                    if st.burst_mode {
+                                        // Burst: retry immediately even on error
+                                        st.seconds_left = 0;
+                                        drop(st);
+                                        log2("⚡ Burst: error — reintentando inmediatamente...", "WARN");
+                                    } else {
+                                        st.seconds_left = st.interval;
+                                        let secs = st.interval;
+                                        drop(st);
+                                        log2(&format!("⏱ Reintentando en {}s...", secs), "WARN");
+                                    }
                                 }
                             }
                         }
@@ -421,9 +390,10 @@ fn main() {
         }
     };
 
-    // ── Callbacks ──
+    // ── Helper macro / closure for browse image by index ──
+    // (inline per slot to avoid complex Rust closure captures)
 
-    // Toggle randomizer (Mode A)
+    // ── Toggle randomizer (Mode A) ──
     {
         let app_weak = app.as_weak();
         let log = append_log.clone();
@@ -433,7 +403,6 @@ fn main() {
                 app.set_rand_active(active);
                 if active {
                     log("🎲 Randomizer ACTIVADO.", "RAND");
-                    // Generate a preview
                     let base = app.get_prompt_base().to_string();
                     let opts = ModifyOptions {
                         do_nails: app.get_chk_nails(),
@@ -468,7 +437,7 @@ fn main() {
         });
     }
 
-    // Generate preview (Mode B)
+    // ── Generate preview (Mode B) ──
     {
         let app_weak = app.as_weak();
         let log = append_log.clone();
@@ -483,7 +452,7 @@ fn main() {
         });
     }
 
-    // Browse output folder
+    // ── Browse output folder ──
     {
         let app_weak = app.as_weak();
         app.on_browse_folder(move || {
@@ -501,89 +470,247 @@ fn main() {
         });
     }
 
-    // ── Browse reference image (I2I) ──
+    // ── Browse reference image #1 ──
     {
         let app_weak = app.as_weak();
         let state = state.clone();
         let log = append_log.clone();
-
         app.on_browse_ref_image(move || {
             if let Some(app) = app_weak.upgrade() {
-                let dialog = rfd::FileDialog::new()
-                    .set_title("Seleccionar imagen de referencia")
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Seleccionar imagen de referencia 1 (persona)")
                     .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
-                    .set_directory(dirs::home_dir().unwrap_or_default());
-
-                if let Some(path) = dialog.pick_file() {
+                    .set_directory(dirs::home_dir().unwrap_or_default())
+                    .pick_file()
+                {
                     match std::fs::read(&path) {
                         Ok(bytes) => {
                             use base64::Engine;
                             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                            let size_kb = bytes.len() / 1024;
-
-                            // Detect MIME from extension so the data URI is correct
-                            let ext = path
-                                .extension()
-                                .map(|e| e.to_string_lossy().to_string())
-                                .unwrap_or_default();
+                            let ext = path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
                             let mime = api::mime_from_ext(&ext).to_string();
-
-                            // Store encoded image + MIME in shared state
-                            {
-                                let mut st = state.lock().unwrap();
-                                st.ref_image_b64 = Some(b64);
-                                st.ref_image_mime = mime.clone();
-                            }
-
-                            // Show filename in UI
-                            let filename = path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "imagen".to_string());
+                            let size_kb = bytes.len() / 1024;
+                            state.lock().unwrap().set_ref_image(0, b64, mime.clone());
+                            let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "imagen1".to_string());
                             app.set_ref_image_path(filename.clone().into());
                             app.set_ref_image_loaded(true);
-
-                            log(
-                                &format!(
-                                    "🖼 Imagen de referencia cargada: {} ({}KB, {})",
-                                    filename, size_kb, mime
-                                ),
-                                "I2I",
-                            );
+                            log(&format!("🖼 Img 1 cargada: {} ({}KB, {})", filename, size_kb, mime), "I2I");
                         }
-                        Err(e) => {
-                            log(
-                                &format!("❌ Error leyendo imagen de referencia: {}", e),
-                                "ERROR",
-                            );
-                        }
+                        Err(e) => log(&format!("❌ Error leyendo Img 1: {}", e), "ERROR"),
                     }
                 }
             }
         });
     }
 
-    // ── Clear reference image (I2I) ──
+    // ── Clear reference image #1 ──
     {
         let app_weak = app.as_weak();
         let state = state.clone();
         let log = append_log.clone();
-
         app.on_clear_ref_image(move || {
-            {
-                let mut st = state.lock().unwrap();
-                st.ref_image_b64 = None;
-                st.ref_image_mime = "image/png".to_string();
-            }
+            state.lock().unwrap().clear_ref_image(0);
             if let Some(app) = app_weak.upgrade() {
                 app.set_ref_image_path("".into());
                 app.set_ref_image_loaded(false);
             }
-            log("🗑 Imagen de referencia eliminada. Modo: texto solo.", "I2I");
+            log("🗑 Img 1 eliminada.", "I2I");
         });
     }
 
-    // Single generate
+    // ── Browse reference image #2 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_browse_ref_image2(move || {
+            if let Some(app) = app_weak.upgrade() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Seleccionar imagen de referencia 2 (escena / vehículo)")
+                    .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
+                    .set_directory(dirs::home_dir().unwrap_or_default())
+                    .pick_file()
+                {
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            use base64::Engine;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let ext = path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+                            let mime = api::mime_from_ext(&ext).to_string();
+                            let size_kb = bytes.len() / 1024;
+                            state.lock().unwrap().set_ref_image(1, b64, mime.clone());
+                            let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "imagen2".to_string());
+                            app.set_ref_image2_path(filename.clone().into());
+                            app.set_ref_image2_loaded(true);
+                            log(&format!("🖼 Img 2 cargada: {} ({}KB, {})", filename, size_kb, mime), "I2I");
+                        }
+                        Err(e) => log(&format!("❌ Error leyendo Img 2: {}", e), "ERROR"),
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Clear reference image #2 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_clear_ref_image2(move || {
+            state.lock().unwrap().clear_ref_image(1);
+            if let Some(app) = app_weak.upgrade() {
+                app.set_ref_image2_path("".into());
+                app.set_ref_image2_loaded(false);
+            }
+            log("🗑 Img 2 eliminada.", "I2I");
+        });
+    }
+
+    // ── Browse reference image #3 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_browse_ref_image3(move || {
+            if let Some(app) = app_weak.upgrade() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Seleccionar imagen de referencia 3 (extra — Flux Kontext Multi / UNO)")
+                    .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
+                    .set_directory(dirs::home_dir().unwrap_or_default())
+                    .pick_file()
+                {
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            use base64::Engine;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let ext = path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+                            let mime = api::mime_from_ext(&ext).to_string();
+                            let size_kb = bytes.len() / 1024;
+                            state.lock().unwrap().set_ref_image(2, b64, mime.clone());
+                            let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "imagen3".to_string());
+                            app.set_ref_image3_path(filename.clone().into());
+                            app.set_ref_image3_loaded(true);
+                            log(&format!("🖼 Img 3 cargada: {} ({}KB, {})", filename, size_kb, mime), "I2I");
+                        }
+                        Err(e) => log(&format!("❌ Error leyendo Img 3: {}", e), "ERROR"),
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Clear reference image #3 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_clear_ref_image3(move || {
+            state.lock().unwrap().clear_ref_image(2);
+            if let Some(app) = app_weak.upgrade() {
+                app.set_ref_image3_path("".into());
+                app.set_ref_image3_loaded(false);
+            }
+            log("🗑 Img 3 eliminada.", "I2I");
+        });
+    }
+
+    // ── Browse reference image #4 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_browse_ref_image4(move || {
+            if let Some(app) = app_weak.upgrade() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Seleccionar imagen de referencia 4 (extra — Flux Kontext Multi / UNO)")
+                    .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
+                    .set_directory(dirs::home_dir().unwrap_or_default())
+                    .pick_file()
+                {
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            use base64::Engine;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let ext = path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+                            let mime = api::mime_from_ext(&ext).to_string();
+                            let size_kb = bytes.len() / 1024;
+                            state.lock().unwrap().set_ref_image(3, b64, mime.clone());
+                            let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "imagen4".to_string());
+                            app.set_ref_image4_path(filename.clone().into());
+                            app.set_ref_image4_loaded(true);
+                            log(&format!("🖼 Img 4 cargada: {} ({}KB, {})", filename, size_kb, mime), "I2I");
+                        }
+                        Err(e) => log(&format!("❌ Error leyendo Img 4: {}", e), "ERROR"),
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Clear reference image #4 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_clear_ref_image4(move || {
+            state.lock().unwrap().clear_ref_image(3);
+            if let Some(app) = app_weak.upgrade() {
+                app.set_ref_image4_path("".into());
+                app.set_ref_image4_loaded(false);
+            }
+            log("🗑 Img 4 eliminada.", "I2I");
+        });
+    }
+
+    // ── Browse reference image #5 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_browse_ref_image5(move || {
+            if let Some(app) = app_weak.upgrade() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Seleccionar imagen de referencia 5 (extra — Flux Kontext Multi / UNO)")
+                    .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
+                    .set_directory(dirs::home_dir().unwrap_or_default())
+                    .pick_file()
+                {
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            use base64::Engine;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let ext = path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+                            let mime = api::mime_from_ext(&ext).to_string();
+                            let size_kb = bytes.len() / 1024;
+                            state.lock().unwrap().set_ref_image(4, b64, mime.clone());
+                            let filename = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "imagen5".to_string());
+                            app.set_ref_image5_path(filename.clone().into());
+                            app.set_ref_image5_loaded(true);
+                            log(&format!("🖼 Img 5 cargada: {} ({}KB, {})", filename, size_kb, mime), "I2I");
+                        }
+                        Err(e) => log(&format!("❌ Error leyendo Img 5: {}", e), "ERROR"),
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Clear reference image #5 ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_clear_ref_image5(move || {
+            state.lock().unwrap().clear_ref_image(4);
+            if let Some(app) = app_weak.upgrade() {
+                app.set_ref_image5_path("".into());
+                app.set_ref_image5_loaded(false);
+            }
+            log("🗑 Img 5 eliminada.", "I2I");
+        });
+    }
+
+    // ── Single generate ──
     {
         let fire = fire_generation.clone();
         let log = append_log.clone();
@@ -593,7 +720,7 @@ fn main() {
         });
     }
 
-    // Start loop
+    // ── Start loop ──
     {
         let app_weak = app.as_weak();
         let state = state.clone();
@@ -605,7 +732,7 @@ fn main() {
                 let mut st = state.lock().unwrap();
                 st.running = true;
                 st.interval = app.get_interval_secs();
-                st.seconds_left = -1; // Fire immediately, countdown starts after
+                st.seconds_left = -1;
                 drop(st);
 
                 app.set_is_running(true);
@@ -617,7 +744,31 @@ fn main() {
         });
     }
 
-    // Stop loop
+    // ── Start burst (continuous, no interval) ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let fire = fire_generation.clone();
+        let log = append_log.clone();
+
+        app.on_start_burst(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let mut st = state.lock().unwrap();
+                st.running = true;
+                st.burst_mode = true;
+                st.seconds_left = -1;
+                drop(st);
+
+                app.set_is_running(true);
+                app.set_status_text("⚡ BURST".into());
+                app.set_status_color(slint::Color::from_rgb_u8(240, 180, 40));
+                log("⚡ Burst Generation iniciado — sin espera entre generaciones.", "BURST");
+                fire();
+            }
+        });
+    }
+
+    // ── Stop loop ──
     {
         let app_weak = app.as_weak();
         let state = state.clone();
@@ -627,6 +778,7 @@ fn main() {
             if let Some(app) = app_weak.upgrade() {
                 let mut st = state.lock().unwrap();
                 st.running = false;
+                st.burst_mode = false;
                 st.seconds_left = 0;
                 drop(st);
 
@@ -669,16 +821,15 @@ fn main() {
                     }
                     app.set_progress_label(format!("Siguiente en {}s", secs).into());
                 } else if st.seconds_left == 0 {
-                    // Countdown hit 0 — mark as generating to prevent overlaps, then fire
                     st.seconds_left = -1;
                     drop(st);
                     fire();
                 } else {
-                    // seconds_left < 0 means it is currently generating. Do nothing.
+                    // < 0 means currently generating
                 }
             }
         });
-        timer // keep alive
+        timer
     };
 
     app.run().unwrap();
