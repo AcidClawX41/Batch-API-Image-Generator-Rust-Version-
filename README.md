@@ -1,6 +1,6 @@
-# ⚡ Batch API Image Generator v2.3.0 (Rust + Slint)
+# ⚡ Batch API Image Generator v2.4.0 (Rust + Slint)
 
-Desktop batch image generator built with **Rust + Slint**. Generates AI images at configurable intervals with a powerful prompt randomizer engine, advanced **Image-to-Image** conditioning with up to **5 reference images**, and **Burst Generation** for continuous non-stop generation. Supports **40 models** across 4 API providers.
+Desktop batch image generator built with **Rust + Slint**. Generates AI images at configurable intervals with a powerful prompt randomizer engine, advanced **Image-to-Image** conditioning with up to **5 reference images**, and **Burst Generation** for continuous non-stop generation. Supports **42 models** across 4 API providers.
 
 ---
 
@@ -44,6 +44,7 @@ Desktop batch image generator built with **Rust + Slint**. Generates AI images a
 | `google/nano-banana-pro/text-to-image` | Google |
 | `alibaba/wan-2.6/text-to-image` | Alibaba (T2I only) |
 | `alibaba/wan-2.7/text-to-image` | Alibaba |
+| `openai/gpt-image-2/text-to-image` | OpenAI via WaveSpeed |
 | `wavespeed-ai/qwen-image-2.0-pro/text-to-image` | Alibaba |
 | `kwaivgi/kling-image-o3/text-to-image` | Kuaishou |
 | `x-ai/grok-2-image` | xAI |
@@ -65,6 +66,7 @@ Desktop batch image generator built with **Rust + Slint**. Generates AI images a
 | `wavespeed-ai/qwen-image/edit` | `images` array | 5 | |
 | `wavespeed-ai/flux-2-klein-4b/edit` | `images` array | 5 | |
 | `alibaba/wan-2.7/image-edit` | `images` array | 5 | |
+| `openai/gpt-image-2/edit` | `images` array | 5 | resolution 1k/2k/4k |
 
 ---
 
@@ -79,6 +81,9 @@ Fires generation requests continuously with zero interval — as soon as one ima
 - Each slot has a distinct color indicator (🔵 blue, 🟢 green, 🟣 purple, 🟠 orange, 🟡 yellow)
 - Dynamic routing sends the correct field (`image` singular vs `images` array) per model's API contract
 - Encodes images directly as Base64 data URIs — no separate upload step
+
+### 🖥 Output Resolution Selector *(New in v2.4)*
+Choose output resolution for all WaveSpeed models directly from the UI: **Auto** (model default), **1k (1024)**, **2k (2048)**, or **4k (4096)**. For GPT Image 2 Edit the `resolution` field is sent natively; for all other WaveSpeed models the `size` field is mapped accordingly.
 
 ### 🔄 Batch Loop
 Configurable interval (10–600 seconds) between generations. Status countdown shows remaining time. Three control buttons:
@@ -164,6 +169,14 @@ Use OpenAI-compatible endpoints returning `b64_json`. Output saved directly from
 ---
 
 ## Changelog
+
+### v2.4.0
+- **New:** GPT Image 2 Text-to-Image (`openai/gpt-image-2/text-to-image`) via WaveSpeed added to model catalog.
+- **New:** GPT Image 2 Edit (`openai/gpt-image-2/edit`) via WaveSpeed — I2I with `images` array + native `resolution` field.
+- **New:** Output resolution selector in UI — Auto / 1k / 2k / 4k. Applies to all WaveSpeed models.
+- **New:** `resolution_to_size` helper maps UI selection to `size` string (`1024*1024` / `2048*2048` / `4096*4096`).
+- **New:** `output_resolution: &str` parameter threaded through `generate_image`, `generate_wavespeed`, `generate_wavespeed_i2i`.
+- **Fix:** GPT Image 2 T2I uses a schema without `size` field (only `prompt` + `aspect_ratio`); handled with a dedicated branch.
 
 ### v2.3.0
 - **Fix:** `x-ai/grok-imagine-image/edit` was sending `images` (array) — API requires `image` singular (xAI images/edits format). Added `is_grok_edit` flag.

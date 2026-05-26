@@ -50,6 +50,8 @@ export component MainWindow inherits Window {
 
     // Model
     in-out property <int> model-index: 0;
+    // 0=Auto  1=1k  2=2k  3=4k
+    in-out property <int> resolution-idx: 0;
     in-out property <[string]> model-list: [
         // xAI
         "xAI — grok-imagine-image",
@@ -98,7 +100,10 @@ export component MainWindow inherits Window {
         "WaveSpeed — Seedream 4.5 Edit  [I2I]",
         "WaveSpeed — Qwen Image Edit  [I2I]",
         "WaveSpeed — Flux 2 Klein Edit  [I2I]",
-        "WaveSpeed — WAN 2.7 Edit  [I2I]"
+        "WaveSpeed — WAN 2.7 Edit  [I2I]",
+        // WaveSpeed: OpenAI GPT Image 2 via WaveSpeed
+        "WaveSpeed — GPT Image 2  [OpenAI]",
+        "WaveSpeed — GPT Image 2 Edit  [I2I · OpenAI]"
     ];
 
     // Theme presets for Mode B
@@ -595,6 +600,12 @@ export component MainWindow inherits Window {
                             current-index <=> root.model-index;
                             horizontal-stretch: 1;
                             min-width: 180px;
+                        }
+                        Text { text: "Resolución:"; color: Theme.text-dim; vertical-alignment: center; }
+                        ComboBox {
+                            model: ["Auto", "1k (1024)", "2k (2048)", "4k (4096)"];
+                            current-index <=> root.resolution-idx;
+                            min-width: 110px;
                         }
                         Text { text: "Intervalo:"; color: Theme.text-dim; vertical-alignment: center; }
                         SpinBox { value <=> root.interval-secs; minimum: 10; maximum: 600; }

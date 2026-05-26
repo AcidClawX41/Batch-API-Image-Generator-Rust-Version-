@@ -220,6 +220,7 @@ pub async fn generate_image(
     output_dir: &str,
     ref_images: &[(String, String)],
     i2i_mode: I2iMode,
+    output_resolution: &str,
 ) -> Result<GenerationResult, String> {
     let api_key = api_key.trim();
     if api_key.is_empty() {
@@ -249,11 +250,11 @@ pub async fn generate_image(
                     model
                 ));
             }
-            generate_wavespeed_i2i(api_key, prompt, model, output_dir, ref_images, i2i_mode).await
+            generate_wavespeed_i2i(api_key, prompt, model, output_dir, ref_images, i2i_mode, output_resolution).await
         }
         // ── WaveSpeed text-to-image ─────────────────────────────────────────
         (ImageProvider::WaveSpeed, false) => {
-            generate_wavespeed(api_key, prompt, model, output_dir).await
+            generate_wavespeed(api_key, prompt, model, output_dir, output_resolution).await
         }
         // ── OpenAI with reference image (uses first only) ───────────────────
         (ImageProvider::OpenAi, true) => {
@@ -530,40 +531,64 @@ async fn generate_wavespeed(
     prompt: &str,
     model: &str,
     output_dir: &str,
+    output_resolution: &str,
 ) -> Result<GenerationResult, String> {
     let client = reqwest::Client::new();
     let url = format!("{}/{}", WAVESPEED_BASE, model);
-    let size = wavespeed_default_size(model);
 
-    let request = WaveSpeedRequest {
-        prompt,
-        size: Some(size),
-        seed: -1,
-        enable_sync_mode: true,
+    // GPT Image 2 T2I uses a different schema: no `size`, just prompt + aspect_ratio
+    let body_str;
+    let body_json;
+    let resp = if model.contains("gpt-image-2") {
+        body_json = serde_json::json!({
+            "prompt": prompt,
+            "seed": -1_i64,
+            "enable_sync_mode": true,
+        });
+        client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body_json)
+            .timeout(std::time::Duration::from_secs(180))
+            .send()
+            .await
+            .map_err(|e| format_reqwest_error(ImageProvider::WaveSpeed, e))?
+    } else {
+        let size = if !output_resolution.is_empty() {
+            resolution_to_size(output_resolution)
+        } else {
+            wavespeed_default_size(model)
+        };
+        let request = WaveSpeedRequest {
+            prompt,
+            size: Some(size),
+            seed: -1,
+            enable_sync_mode: true,
+        };
+        client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&request)
+            .timeout(std::time::Duration::from_secs(180))
+            .send()
+            .await
+            .map_err(|e| format_reqwest_error(ImageProvider::WaveSpeed, e))?
     };
 
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&request)
-        .timeout(std::time::Duration::from_secs(180))
-        .send()
-        .await
-        .map_err(|e| format_reqwest_error(ImageProvider::WaveSpeed, e))?;
-
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    body_str = resp.text().await.unwrap_or_default();
 
     if !status.is_success() {
-        let msg = serde_json::from_str::<WaveSpeedResponse>(&body)
+        let msg = serde_json::from_str::<WaveSpeedResponse>(&body_str)
             .ok()
             .and_then(|r| r.message)
-            .unwrap_or(body);
+            .unwrap_or(body_str);
         return Err(format!("WaveSpeed devolvió HTTP {}: {}", status.as_u16(), msg));
     }
 
-    handle_wavespeed_response(&client, api_key, &body, output_dir).await
+    handle_wavespeed_response(&client, api_key, &body_str, output_dir).await
 }
 
 // ─── WaveSpeed image-to-image flow ───────────────────────────────────────────
@@ -585,6 +610,7 @@ async fn generate_wavespeed_i2i(
     output_dir: &str,
     ref_images: &[(String, String)],
     i2i_mode: I2iMode,
+    output_resolution: &str,
 ) -> Result<GenerationResult, String> {
     let client = reqwest::Client::new();
 
@@ -619,7 +645,11 @@ async fn generate_wavespeed_i2i(
     };
 
     let url = format!("{}/{}", WAVESPEED_BASE, actual_model);
-    let size = wavespeed_default_size(model);
+    let size = if !output_resolution.is_empty() {
+        resolution_to_size(output_resolution)
+    } else {
+        wavespeed_default_size(model)
+    };
 
     // Build data URIs for all reference images
     let data_uris: Vec<String> = ref_images
@@ -658,6 +688,11 @@ async fn generate_wavespeed_i2i(
         "enable_sync_mode": true,
         "strength": strength,
     });
+
+    // GPT Image 2 Edit uses `resolution` (1k/2k/4k) instead of (or in addition to) `size`
+    if actual_model.contains("gpt-image-2") && !output_resolution.is_empty() {
+        body["resolution"] = serde_json::Value::String(output_resolution.to_string());
+    }
 
     if is_kontext_single || is_grok_edit {
         // `image`: single data URI (first reference only)
@@ -828,6 +863,16 @@ fn wavespeed_default_size(model: &str) -> &'static str {
         "1920*1920"
     } else {
         "1024*1024"
+    }
+}
+
+/// Maps a user-selected resolution string to a WaveSpeed `size` field value.
+fn resolution_to_size(res: &str) -> &'static str {
+    match res {
+        "1k" => "1024*1024",
+        "2k" => "2048*2048",
+        "4k" => "4096*4096",
+        _    => "1024*1024",
     }
 }
 

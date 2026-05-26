@@ -121,6 +121,9 @@ const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-klein-4b/edit" },
     // ── WaveSpeed: WAN 2.7 Image Edit ──
     ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "alibaba/wan-2.7/image-edit" },
+    // ── WaveSpeed: OpenAI GPT Image 2 (via WaveSpeed) ──
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "openai/gpt-image-2/text-to-image" },
+    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "openai/gpt-image-2/edit" },
 ];
 
 fn main() {
@@ -241,7 +244,14 @@ fn main() {
         move || {
             let app = app_weak.upgrade().unwrap();
             let prompt = resolve();
-            let model_idx = app.get_model_index() as usize;
+            let model_idx   = app.get_model_index() as usize;
+            let res_idx = app.get_resolution_idx() as usize;
+            let output_resolution = match res_idx {
+                1 => "1k",
+                2 => "2k",
+                3 => "4k",
+                _ => "",
+            }.to_string();
             let selected_model = MODEL_CATALOG.get(model_idx).unwrap_or(&MODEL_CATALOG[0]);
 
             let api_key = if selected_model.provider == ImageProvider::WaveSpeed {
@@ -321,6 +331,7 @@ fn main() {
                     &output_dir,
                     &ref_images,
                     i2i_mode,
+                    &output_resolution,
                 )
                 .await;
 
