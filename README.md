@@ -1,6 +1,6 @@
 # ⚡ Batch API Image Generator v2.4.0 (Rust + Slint)
 
-Desktop batch image generator built with **Rust + Slint**. Generates AI images at configurable intervals with a powerful prompt randomizer engine, advanced **Image-to-Image** conditioning with up to **5 reference images**, and **Burst Generation** for continuous non-stop generation. Supports **42 models** across 4 API providers.
+Desktop batch image generator built with **Rust + Slint**. Generates AI images at configurable intervals with a powerful prompt randomizer engine, advanced **Image-to-Image** conditioning with up to **5 reference images**, and **Burst Generation** for continuous non-stop generation. Supports **51 models** across 5 API providers (xAI, Google, OpenAI, WaveSpeed, Kie.AI).
 
 ---
 

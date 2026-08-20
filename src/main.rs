@@ -1,5 +1,5 @@
 #![windows_subsystem = "windows"]
-//! main.rs — Batch Image Generator v2.4.0 (Rust + Slint)
+//! main.rs — Batch Image Generator v2.5.0 (Rust + Slint)
 //!
 //! Entry point. Wires up the Slint UI with the async API client,
 //! randomizer, countdown timer logic, and Image-to-Image conditioning.
@@ -7,10 +7,14 @@
 //! (Flux Kontext Multi, UNO).
 
 mod api;
+mod config;
+mod models;
+mod notify;
 mod pools;
 mod randomizer;
+mod util;
 
-use api::{I2iMode, ImageProvider};
+use api::{I2iMode, KeySlot};
 use randomizer::ModifyOptions;
 use slint::{Timer, TimerMode};
 use std::sync::{Arc, Mutex};
@@ -29,6 +33,23 @@ struct AppState {
     /// Index 0 = persona/primary, 1 = escena/secondary, 2-4 = extra refs.
     /// An empty base64 string means that slot is not loaded.
     ref_images: Vec<(String, String)>,
+    /// Banco de prompts: 5 ranuras. Los textos viven aquí, no en la
+    /// interfaz, para no llenarla de propiedades y poder sortearlos.
+    prompt_bank: Vec<String>,
+    /// Selección manual de casillas guardada mientras el Super Randomizer
+    /// está activo.
+    ///
+    /// Con Super activo las casillas se sobrescriben en cada generación para
+    /// que se vea el sorteo. Sin esta copia, al apagarlo el usuario habría
+    /// perdido la combinación que tenía puesta —y al cerrar la aplicación se
+    /// habría guardado la última tirada aleatoria como si fuera su elección.
+    manual_checks: Option<config::Checks>,
+    /// Generación en curso, para poder abortarla al pulsar «Detener».
+    ///
+    /// Antes «Detener» sólo ponía `running = false`: la petición ya lanzada
+    /// seguía viva hasta su timeout (180 s), así que el estado decía DETENIDO
+    /// y minutos después aparecía otra imagen en la carpeta — facturada.
+    current_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AppState {
@@ -57,74 +78,44 @@ impl AppState {
     }
 }
 
-struct ModelCatalogEntry {
-    provider: ImageProvider,
-    model: &'static str,
-}
+// El catálogo de modelos vivía aquí, duplicado a mano y en el mismo orden
+// que la lista de `ui/main.slint`. Ahora es `src/models.rs`, y de ahí salen
+// tanto el enrutado como las etiquetas de la interfaz.
 
-const MODEL_CATALOG: &[ModelCatalogEntry] = &[
-    // ── xAI ──
-    ModelCatalogEntry { provider: ImageProvider::Xai,       model: "grok-imagine-image" },
-    ModelCatalogEntry { provider: ImageProvider::Xai,       model: "grok-imagine-image-pro" },
-    // ── Google ──
-    ModelCatalogEntry { provider: ImageProvider::Google,    model: "gemini-2.5-flash-image" },
-    ModelCatalogEntry { provider: ImageProvider::Google,    model: "gemini-3-pro-image-preview" },
-    // ── OpenAI ──
-    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "gpt-image-1.5" },
-    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "gpt-image-1" },
-    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "gpt-image-1-mini" },
-    ModelCatalogEntry { provider: ImageProvider::OpenAi,    model: "dall-e-3" },
-    // ── WaveSpeed: Flux 2 family (T2I only) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-max/text-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-dev/text-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-flash/text-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-flex/text-to-image" },
-    // ── WaveSpeed: Flux Kontext single (1 img ref) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-max/text-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-pro/text-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-dev" },
-    // ── WaveSpeed: Flux Kontext Multi (up to 5 imgs ref) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-max/multi" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-kontext-pro/multi" },
-    // ── WaveSpeed: WAN (I2I) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/wan-2.2/image-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "alibaba/wan-2.6/text-to-image" },
-    // ── WaveSpeed: UNO (multi-ref) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/uno" },
-    // ── WaveSpeed: Seedream (ByteDance) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v5.0-lite" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v4.5" },
-    // ── WaveSpeed: Nano Banana (Google via WaveSpeed) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-2/text-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-pro/text-to-image" },
-    // ── WaveSpeed: Dreamina (ByteDance) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/dreamina-v3.1/text-to-image" },
-    // ── WaveSpeed: Qwen Image (Alibaba) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/qwen-image-2.0-pro/text-to-image" },
-    // ── WaveSpeed: Kling (Kuaishou) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "kwaivgi/kling-image-o3/text-to-image" },
-    // ── WaveSpeed: Grok (xAI via WaveSpeed) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "x-ai/grok-2-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "x-ai/grok-imagine-image-text-to-image" },
-    // ── WaveSpeed: Grok Imagine Edit (I2I nativo) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "x-ai/grok-imagine-image/edit" },
-    // ── WaveSpeed: Nano Banana Edit (hasta 14 imgs) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-2/edit" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-2/edit-fast" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "google/nano-banana-pro/edit" },
-    // ── WaveSpeed: Seedream Edit ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v5.0-lite/edit" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "bytedance/seedream-v4.5/edit" },
-    // ── WaveSpeed: Qwen Image Edit ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/qwen-image/edit" },
-    // ── WaveSpeed: Flux 2 Klein Edit ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "wavespeed-ai/flux-2-klein-4b/edit" },
-    // ── WaveSpeed: WAN 2.7 Image Edit ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "alibaba/wan-2.7/image-edit" },
-    // ── WaveSpeed: OpenAI GPT Image 2 (via WaveSpeed) ──
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "openai/gpt-image-2/text-to-image" },
-    ModelCatalogEntry { provider: ImageProvider::WaveSpeed, model: "openai/gpt-image-2/edit" },
-];
+/// Tamaño máximo del log en memoria.
+///
+/// La 2.4.0 concatenaba cada línea sobre el `String` completo
+/// (`format!("{}{}", todo_el_log, linea)`), copiándolo entero en cada
+/// escritura: coste O(n²) en tiempo y memoria que en sesiones Burst largas
+/// degradaba la interfaz progresivamente y no liberaba nunca. Aquí el log se
+/// acota y se recorta por la cabecera, siempre en frontera de línea.
+const LOG_MAX_BYTES: usize = 200_000;
+
+fn trim_log(s: &str) -> String {
+    if s.len() <= LOG_MAX_BYTES {
+        return s.to_string();
+    }
+    let target = s.len().saturating_sub(LOG_MAX_BYTES / 2);
+
+    // Se corta preferentemente en un salto de línea para no partir un
+    // mensaje por la mitad. Si no hay ninguno a partir de `target` —una
+    // única línea gigantesca—, se corta igualmente en la primera frontera
+    // de carácter válida: lo que no puede hacerse es devolver la cadena
+    // entera, porque entonces el log nunca dejaría de crecer.
+    let start = s
+        .char_indices()
+        .skip_while(|(i, _)| *i < target)
+        .find(|(_, c)| *c == '\n')
+        .map(|(i, _)| i + 1)
+        .unwrap_or_else(|| {
+            s.char_indices()
+                .map(|(i, _)| i)
+                .find(|i| *i >= target)
+                .unwrap_or(s.len())
+        });
+
+    format!("[… log recortado …]\n{}", &s[start..])
+}
 
 fn main() {
     #[cfg(target_os = "macos")]
@@ -134,12 +125,29 @@ fn main() {
         }
     }
 
-    let app = MainWindow::new().unwrap();
+    let app = match MainWindow::new() {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("No se pudo crear la ventana: {e}");
+            eprintln!("En Linux sin servidor gráfico, exporta DISPLAY o usa una sesión con escritorio.");
+            std::process::exit(1);
+        }
+    };
 
-    if let Some(home) = dirs::home_dir() {
-        let default_folder = home.join("batch_images").to_string_lossy().to_string();
-        app.set_output_folder(default_folder.into());
-    }
+    // ── Preferencias guardadas ──
+    // Se restauran skin, carpeta, modelo, intervalo y randomizer. Las API
+    // keys NO se persisten (ver src/config.rs).
+    // La lista del desplegable se genera desde la tabla de modelos: es
+    // imposible que muestre un nombre y se envíe otro.
+    app.set_model_list(slint::ModelRc::new(slint::VecModel::from(
+        models::labels()
+            .into_iter()
+            .map(slint::SharedString::from)
+            .collect::<Vec<_>>(),
+    )));
+
+    let cfg = config::Config::load();
+    apply_config(&app, &cfg);
 
     let state = Arc::new(Mutex::new(AppState {
         running: false,
@@ -147,6 +155,9 @@ fn main() {
         seconds_left: 0,
         interval: 60,
         ref_images: Vec::new(),
+        prompt_bank: cfg.prompts.clone(),
+        manual_checks: None,
+        current_task: None,
     }));
 
     let rt = Arc::new(
@@ -166,22 +177,91 @@ fn main() {
             slint::invoke_from_event_loop(move || {
                 if let Some(app) = app_weak.upgrade() {
                     let current = app.get_log_text().to_string();
-                    app.set_log_text(format!("{}{}", current, line).into());
+                    let mut next = current;
+                    next.push_str(&line);
+                    app.set_log_text(trim_log(&next).into());
                 }
             })
             .ok();
         }
     };
 
+    // Versión de una sola pieza del log, para los sitios donde sólo hace
+    // falta escribir una línea con nivel RAND.
+    let append_log_plain = {
+        let log = append_log.clone();
+        move |msg: &str| log(msg, "RAND")
+    };
+
     // ── Resolve prompt (Mode A or B) ──
     let resolve_prompt = {
         let app_weak = app.as_weak();
+        let log_super = append_log_plain.clone();
+        let state = state.clone();
         move || -> String {
             let app = app_weak.upgrade().unwrap();
             let mode = app.get_current_mode();
 
             if mode == 0 {
-                let base = app.get_prompt_base().to_string();
+                // Banco de prompts: si el sorteo está activo, la base de esta
+                // generación sale de una ranura guardada elegida al azar.
+                //
+                // No se sobrescribe el cuadro de texto: lo que hay escrito ahí
+                // es del usuario y se conserva. El prompt elegido se ve en el
+                // preview, ya montado con el randomizer encima.
+                let base = if app.get_prompt_random_active() {
+                    let guardados: Vec<(usize, String)> = state
+                        .lock()
+                        .map(|st| {
+                            st.prompt_bank
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, p)| !p.trim().is_empty())
+                                .map(|(i, p)| (i, p.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if guardados.is_empty() {
+                        log_super(
+                            "⚠ Prompt aleatorio activo pero el banco está vacío:                              se usa el prompt escrito.",
+                        );
+                        app.get_prompt_base().to_string()
+                    } else {
+                        let n = {
+                            use rand::Rng;
+                            rand::thread_rng().gen_range(0..guardados.len())
+                        };
+                        let (idx, texto) = guardados[n].clone();
+                        log_super(&format!(
+                            "🎲 Prompt del banco: ranura {} de {} guardadas — «{}»",
+                            idx + 1,
+                            guardados.len(),
+                            util::truncate_chars(&texto, 60)
+                        ));
+                        texto
+                    }
+                } else {
+                    app.get_prompt_base().to_string()
+                };
+
+                // Super Randomizer: se sortea la combinación en cada
+                // generación y se vuelca sobre las casillas para que se vea
+                // qué ha tocado esta vez.
+                if app.get_super_rand_active() {
+                    let (opts, nombres) = randomizer::random_options();
+                    apply_checks_to_ui(&app, &randomizer::options_as_flags(&opts));
+                    log_super(&format!(
+                        "🎰 Super Randomizer: {} de {} categorías — {}",
+                        nombres.len(),
+                        randomizer::CATEGORY_NAMES.len(),
+                        nombres.join(", ")
+                    ));
+                    let result = randomizer::modify_prompt(&base, &opts);
+                    app.set_preview_text(result.clone().into());
+                    return result;
+                }
+
                 if app.get_rand_active() {
                     let opts = ModifyOptions {
                         do_nails: app.get_chk_nails(),
@@ -252,22 +332,35 @@ fn main() {
                 3 => "4k",
                 _ => "",
             }.to_string();
-            let selected_model = MODEL_CATALOG.get(model_idx).unwrap_or(&MODEL_CATALOG[0]);
+            let spec = models::get(model_idx);
+            let provider = spec.provider;
 
-            let api_key = if selected_model.provider == ImageProvider::WaveSpeed {
-                app.get_wavespeed_api_key().to_string()
-            } else {
-                app.get_api_key().to_string()
+            // Cada proveedor toma su clave del campo que le corresponde.
+            let api_key = match provider.key_slot() {
+                KeySlot::WaveSpeed => app.get_wavespeed_api_key().to_string(),
+                KeySlot::KieAi => app.get_kie_api_key().to_string(),
+                KeySlot::General => app.get_api_key().to_string(),
             };
-            let provider = selected_model.provider;
-            let model = selected_model.model.to_string();
             let output_dir = app.get_output_folder().to_string();
 
             // Collect active reference images from shared state
-            let ref_images: Vec<(String, String)> = {
+            let mut ref_images: Vec<(String, String)> = {
                 let st = state.lock().unwrap();
                 st.active_ref_images()
             };
+
+            // El modelo puede aceptar menos referencias de las cargadas.
+            // Se avisa en vez de descartarlas en silencio o provocar un 400.
+            if ref_images.len() > spec.max_refs {
+                log(&format!(
+                    "⚠ «{}» acepta {} imagen{} de referencia; se ignoran las {} restantes.",
+                    spec.label,
+                    spec.max_refs,
+                    if spec.max_refs == 1 { "" } else { "es" },
+                    ref_images.len() - spec.max_refs
+                ), "WARN");
+                ref_images.truncate(spec.max_refs);
+            }
 
             let i2i_mode = if app.get_i2i_mode_index() == 1 {
                 I2iMode::DirectEdit
@@ -282,8 +375,28 @@ fn main() {
             let log2 = log.clone();
             let state2 = state.clone();
 
+            // Canal de avance para la capa de red. `slint::Weak` es Send +
+            // Sync, así que la tarea asíncrona puede escribir en el log a
+            // través del bucle de eventos.
+            let progress: api::ProgressFn = {
+                let app_weak = app_weak.clone();
+                Arc::new(move |msg: String| {
+                    let app_weak = app_weak.clone();
+                    let ts = chrono::Local::now().format("%H:%M:%S").to_string();
+                    let line = format!("[{}] [API] {}\n", ts, msg);
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            let mut next = app.get_log_text().to_string();
+                            next.push_str(&line);
+                            app.set_log_text(trim_log(&next).into());
+                        }
+                    })
+                    .ok();
+                })
+            };
+
             log(&format!("Proveedor: {}", provider.display_name()), "INFO");
-            log(&format!("Modelo: {}", model), "INFO");
+            log(&format!("Modelo: {}", spec.label), "INFO");
             log(&format!("Carpeta: {}", output_dir), "INFO");
 
             if !ref_images.is_empty() {
@@ -301,20 +414,15 @@ fn main() {
 
             let base_prompt = app.get_prompt_base().to_string();
             if !base_prompt.trim().is_empty() {
-                let base_preview = if base_prompt.len() > 100 {
-                    format!("{}...", &base_prompt[..100])
-                } else {
-                    base_prompt.clone()
-                };
+                // Recorte por caracteres: `&base_prompt[..100]` entraba en
+                // pánico si el byte 100 caía dentro de un carácter multibyte.
+                let base_preview = util::truncate_chars(&base_prompt, 100);
                 log(&format!("🎯 Base prompt: \"{}\"", base_preview), "INFO");
             }
 
-            let prompt_preview = if prompt.len() > 200 {
-                format!("{}...", &prompt[..200])
-            } else {
-                prompt.clone()
-            };
-            log(&format!("📝 Prompt final ({}ch): {}", prompt.len(), prompt_preview), "INFO");
+            // Ídem: recorte por caracteres, no por bytes.
+            let prompt_preview = util::truncate_chars(&prompt, 200);
+            log(&format!("📝 Prompt final ({} caracteres): {}", prompt.chars().count(), prompt_preview), "INFO");
 
             if app.get_rand_active() {
                 log("🎲 Randomizer: ACTIVO", "RAND");
@@ -322,16 +430,16 @@ fn main() {
 
             log(&format!("Enviando petición a {} API...", provider.display_name()), "INFO");
 
-            rt.spawn(async move {
+            let handle = rt.spawn(async move {
                 let result = api::generate_image(
-                    provider,
+                    spec,
                     &api_key,
                     &prompt,
-                    &model,
                     &output_dir,
                     &ref_images,
                     i2i_mode,
                     &output_resolution,
+                    &progress,
                 )
                 .await;
 
@@ -349,6 +457,12 @@ fn main() {
                                     "✅ Imagen #{} guardada: {} ({})",
                                     count, gen.filepath, gen.filename
                                 ), "OK");
+
+                                notify::notify(
+                                    notify_settings(&app),
+                                    notify::Event::Success,
+                                    &format!("Imagen #{} — {}", count, gen.filename),
+                                );
 
                                 let mut st = state2.lock().unwrap();
                                 if st.running {
@@ -378,6 +492,12 @@ fn main() {
                                 app.set_progress_label("Error".into());
                                 log2(&format!("❌ {}", e), "ERROR");
 
+                                // El tipo de fallo sale del texto del
+                                // proveedor: no hay un código uniforme para
+                                // «rechazado por contenido» ni para «se me
+                                // acabó el tiempo».
+                                notify::notify(notify_settings(&app), notify::classify(&e), &e);
+
                                 let mut st = state2.lock().unwrap();
                                 if st.running {
                                     if st.burst_mode {
@@ -398,6 +518,11 @@ fn main() {
                 })
                 .ok();
             });
+
+            // Se guarda para poder abortarla desde «Detener».
+            if let Ok(mut st) = state.lock() {
+                st.current_task = Some(handle);
+            }
         }
     };
 
@@ -444,6 +569,202 @@ fn main() {
                     log("🎲 Randomizer DESACTIVADO.", "RAND");
                     app.set_preview_text("".into());
                 }
+            }
+        });
+    }
+
+    // ── Super Randomizer ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_toggle_super_randomizer(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let activar = !app.get_super_rand_active();
+                app.set_super_rand_active(activar);
+
+                let Ok(mut st) = state.lock() else { return };
+                if activar {
+                    // Guardar la combinación manual para devolverla intacta
+                    // al apagar. Sin esto, el sorteo la pisaría para siempre.
+                    st.manual_checks = Some(checks_from_ui(&app));
+                    drop(st);
+
+                    // El Super Randomizer no tiene sentido con el randomizer
+                    // apagado: se enciende solo.
+                    if !app.get_rand_active() {
+                        app.set_rand_active(true);
+                        log("🎲 Randomizer activado por el Super Randomizer.", "RAND");
+                    }
+                    log(
+                        "🎰 Super Randomizer ACTIVADO — cada generación sorteará cuántas \
+                         categorías entran (de 1 a 21) y cuáles.",
+                        "RAND",
+                    );
+                } else {
+                    let manual = st.manual_checks.take();
+                    drop(st);
+                    if let Some(c) = manual {
+                        checks_to_ui(&app, &c);
+                        log(
+                            "🎰 Super Randomizer DESACTIVADO — restaurada tu selección manual.",
+                            "RAND",
+                        );
+                    } else {
+                        log("🎰 Super Randomizer DESACTIVADO.", "RAND");
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Banco de prompts ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_save_prompt_slot(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let texto = app.get_prompt_base().to_string();
+                if texto.trim().is_empty() {
+                    log("⚠ El prompt está vacío: no hay nada que guardar.", "WARN");
+                    return;
+                }
+                let i = app.get_prompt_slot_index().clamp(0, config::PROMPT_SLOTS as i32 - 1) as usize;
+                if let Ok(mut st) = state.lock() {
+                    st.prompt_bank.resize(config::PROMPT_SLOTS, String::new());
+                    st.prompt_bank[i] = texto.clone();
+                    app.set_prompt_slots_summary(slots_summary(&st.prompt_bank).into());
+                }
+                log(
+                    &format!(
+                        "💾 Guardado en la ranura {}: «{}»",
+                        i + 1,
+                        util::truncate_chars(&texto, 60)
+                    ),
+                    "INFO",
+                );
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_load_prompt_slot(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let i = app.get_prompt_slot_index().clamp(0, config::PROMPT_SLOTS as i32 - 1) as usize;
+                let texto = state
+                    .lock()
+                    .ok()
+                    .and_then(|st| st.prompt_bank.get(i).cloned())
+                    .unwrap_or_default();
+                if texto.trim().is_empty() {
+                    log(&format!("⚠ La ranura {} está vacía.", i + 1), "WARN");
+                } else {
+                    app.set_prompt_base(texto.into());
+                    log(&format!("📂 Cargada la ranura {}.", i + 1), "INFO");
+                }
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_clear_prompt_slot(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let i = app.get_prompt_slot_index().clamp(0, config::PROMPT_SLOTS as i32 - 1) as usize;
+                if let Ok(mut st) = state.lock() {
+                    st.prompt_bank.resize(config::PROMPT_SLOTS, String::new());
+                    st.prompt_bank[i] = String::new();
+                    app.set_prompt_slots_summary(slots_summary(&st.prompt_bank).into());
+                }
+                log(&format!("🗑 Vaciada la ranura {}.", i + 1), "INFO");
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        let log = append_log.clone();
+        app.on_toggle_prompt_random(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let activar = !app.get_prompt_random_active();
+                app.set_prompt_random_active(activar);
+                if activar {
+                    let guardados = state
+                        .lock()
+                        .map(|st| st.prompt_bank.iter().filter(|p| !p.trim().is_empty()).count())
+                        .unwrap_or(0);
+                    if guardados == 0 {
+                        log(
+                            "⚠ Prompt aleatorio ACTIVADO, pero el banco está vacío.                              Guarda al menos un prompt o se usará el que esté escrito.",
+                            "WARN",
+                        );
+                    } else {
+                        log(
+                            &format!(
+                                "🎲 Prompt aleatorio ACTIVADO — se sorteará entre {} prompt{} guardado{}.",
+                                guardados,
+                                if guardados == 1 { "" } else { "s" },
+                                if guardados == 1 { "" } else { "s" }
+                            ),
+                            "RAND",
+                        );
+                    }
+                } else {
+                    log("🎲 Prompt aleatorio DESACTIVADO.", "RAND");
+                }
+            }
+        });
+    }
+
+    // ── Notificaciones ──
+    {
+        let app_weak = app.as_weak();
+        let log = append_log.clone();
+        app.on_toggle_notifications(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let activar = !app.get_notify_enabled();
+                app.set_notify_enabled(activar);
+                log(
+                    if activar {
+                        "🔔 Notificaciones de escritorio ACTIVADAS."
+                    } else {
+                        "🔕 Notificaciones de escritorio DESACTIVADAS."
+                    },
+                    "INFO",
+                );
+            }
+        });
+    }
+    {
+        let app_weak = app.as_weak();
+        let log = append_log.clone();
+        app.on_test_notification(move || {
+            if let Some(app) = app_weak.upgrade() {
+                // El aviso de prueba se manda saltándose los interruptores
+                // por tipo: el usuario quiere ver si su escritorio los
+                // muestra, no comprobar sus preferencias.
+                let s = notify::Settings {
+                    enabled: app.get_notify_enabled(),
+                    on_success: true,
+                    ..notify::Settings::default()
+                };
+                let enviado = notify::notify(
+                    s,
+                    notify::Event::Success,
+                    "Si ves esto, las notificaciones funcionan en tu escritorio.",
+                );
+                log(
+                    if enviado {
+                        "🔔 Aviso de prueba enviado. Si no aparece, revisa las notificaciones del sistema."
+                    } else {
+                        "🔕 No se envió el aviso de prueba (notificaciones desactivadas)."
+                    },
+                    "INFO",
+                );
             }
         });
     }
@@ -742,6 +1063,10 @@ fn main() {
             if let Some(app) = app_weak.upgrade() {
                 let mut st = state.lock().unwrap();
                 st.running = true;
+                // Sin esto, arrancar Burst y después «Iniciar Loop» sin pasar
+                // por «Detener» dejaba `burst_mode` en true: el loop con
+                // intervalo generaba sin pausa e ignoraba el temporizador.
+                st.burst_mode = false;
                 st.interval = app.get_interval_secs();
                 st.seconds_left = -1;
                 drop(st);
@@ -791,6 +1116,11 @@ fn main() {
                 st.running = false;
                 st.burst_mode = false;
                 st.seconds_left = 0;
+                // Cancelar de verdad la generación en curso, no sólo dejar de
+                // programar la siguiente.
+                let cancelada = st.current_task.take().map(|h| {
+                    h.abort();
+                }).is_some();
                 drop(st);
 
                 app.set_is_running(false);
@@ -799,7 +1129,12 @@ fn main() {
                 app.set_countdown_text("--:--".into());
                 app.set_progress_value(0.0);
                 app.set_progress_label("Detenido".into());
-                log("■ Loop detenido.", "WARN");
+                app.set_progress_indeterminate(false);
+                if cancelada {
+                    log("■ Loop detenido — generación en curso cancelada.", "WARN");
+                } else {
+                    log("■ Loop detenido.", "WARN");
+                }
             }
         });
     }
@@ -843,5 +1178,286 @@ fn main() {
         timer
     };
 
-    app.run().unwrap();
+    // ── Persistir la skin en cuanto se cambia ──
+    {
+        let app_weak = app.as_weak();
+        let state = state.clone();
+        app.on_skin_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                let (manual, bank) = state
+                    .lock()
+                    .map(|st| (st.manual_checks.clone(), st.prompt_bank.clone()))
+                    .unwrap_or((None, Vec::new()));
+                if let Err(e) = collect_config(&app, manual.as_ref(), &bank).save() {
+                    eprintln!("[config] no se pudo guardar: {e}");
+                }
+            }
+        });
+    }
+
+    if let Err(e) = app.run() {
+        eprintln!("Error en el bucle de la interfaz: {e}");
+    }
+
+    // ── Guardar preferencias al salir ──
+    let (manual, bank) = state
+        .lock()
+        .map(|st| (st.manual_checks.clone(), st.prompt_bank.clone()))
+        .unwrap_or((None, Vec::new()));
+    if let Err(e) = collect_config(&app, manual.as_ref(), &bank).save() {
+        eprintln!("[config] no se pudo guardar al salir: {e}");
+    }
+}
+
+/// Resumen legible de qué ranuras del banco están ocupadas.
+fn slots_summary(bank: &[String]) -> String {
+    bank.iter()
+        .enumerate()
+        .map(|(i, p)| format!("{} {}", i + 1, if p.trim().is_empty() { "—" } else { "✓" }))
+        .collect::<Vec<_>>()
+        .join("  ·  ")
+}
+
+/// Lee las preferencias de notificación de la interfaz.
+fn notify_settings(app: &MainWindow) -> notify::Settings {
+    notify::Settings {
+        enabled: app.get_notify_enabled(),
+        on_success: app.get_notify_success(),
+        on_timeout: app.get_notify_timeout(),
+        on_policy: app.get_notify_policy(),
+        on_other_error: app.get_notify_other(),
+    }
+}
+
+/// Vuelca 21 interruptores sobre las casillas, en el orden de la interfaz.
+///
+/// Se usa para que el sorteo del Super Randomizer sea visible: en cada
+/// generación las casillas muestran qué categorías han entrado.
+fn apply_checks_to_ui(app: &MainWindow, f: &[bool; 21]) {
+    app.set_chk_nails(f[0]);
+    app.set_chk_orient(f[1]);
+    app.set_chk_expression(f[2]);
+    app.set_chk_outfit(f[3]);
+    app.set_chk_legwear(f[4]);
+    app.set_chk_environment(f[5]);
+    app.set_chk_atmosphere(f[6]);
+    app.set_chk_pose(f[7]);
+    app.set_chk_lighting(f[8]);
+    app.set_chk_camera(f[9]);
+    app.set_chk_rare(f[10]);
+    app.set_chk_accessories(f[11]);
+    app.set_chk_makeup(f[12]);
+    app.set_chk_body_type(f[13]);
+    app.set_chk_age_vibe(f[14]);
+    app.set_chk_color_palette(f[15]);
+    app.set_chk_time_of_day(f[16]);
+    app.set_chk_weather(f[17]);
+    app.set_chk_bg_props(f[18]);
+    app.set_chk_material(f[19]);
+    app.set_chk_motion(f[20]);
+}
+
+/// Lee las casillas actuales de la interfaz.
+fn checks_from_ui(app: &MainWindow) -> config::Checks {
+    config::Checks {
+        nails: app.get_chk_nails(),
+        orient: app.get_chk_orient(),
+        expression: app.get_chk_expression(),
+        outfit: app.get_chk_outfit(),
+        legwear: app.get_chk_legwear(),
+        environment: app.get_chk_environment(),
+        atmosphere: app.get_chk_atmosphere(),
+        pose: app.get_chk_pose(),
+        lighting: app.get_chk_lighting(),
+        camera: app.get_chk_camera(),
+        rare: app.get_chk_rare(),
+        accessories: app.get_chk_accessories(),
+        makeup: app.get_chk_makeup(),
+        body_type: app.get_chk_body_type(),
+        age_vibe: app.get_chk_age_vibe(),
+        color_palette: app.get_chk_color_palette(),
+        time_of_day: app.get_chk_time_of_day(),
+        weather: app.get_chk_weather(),
+        bg_props: app.get_chk_bg_props(),
+        material: app.get_chk_material(),
+        motion: app.get_chk_motion(),
+        curated: app.get_chk_curated(),
+        auto_b: app.get_chk_auto_b(),
+    }
+}
+
+/// Escribe una estructura de casillas sobre la interfaz.
+fn checks_to_ui(app: &MainWindow, c: &config::Checks) {
+    apply_checks_to_ui(
+        app,
+        &[
+            c.nails, c.orient, c.expression, c.outfit, c.legwear,
+            c.environment, c.atmosphere, c.pose, c.lighting, c.camera,
+            c.rare, c.accessories, c.makeup, c.body_type, c.age_vibe,
+            c.color_palette, c.time_of_day, c.weather, c.bg_props,
+            c.material, c.motion,
+        ],
+    );
+    app.set_chk_curated(c.curated);
+    app.set_chk_auto_b(c.auto_b);
+}
+
+/// Vuelca la configuración guardada sobre las propiedades de la interfaz.
+fn apply_config(app: &MainWindow, cfg: &config::Config) {
+    app.set_skin_index(cfg.skin);
+    app.set_output_folder(cfg.output_folder.clone().into());
+    app.set_model_index(cfg.model_index.clamp(0, models::CATALOG.len() as i32 - 1));
+    app.set_resolution_idx(cfg.resolution_idx.clamp(0, 3));
+    app.set_interval_secs(cfg.interval_secs.clamp(10, 600));
+    app.set_current_mode(cfg.current_mode.clamp(0, 1));
+    app.set_theme_index(cfg.theme_index.max(0));
+    app.set_i2i_mode_index(cfg.i2i_mode_index.clamp(0, 1));
+    app.set_rand_active(cfg.rand_active);
+    app.set_super_rand_active(cfg.super_rand_active);
+    app.set_prompt_slot_index(cfg.prompt_slot.clamp(0, config::PROMPT_SLOTS as i32 - 1));
+    app.set_prompt_random_active(cfg.prompt_random);
+    app.set_prompt_slots_summary(slots_summary(&cfg.prompts).into());
+    app.set_notify_enabled(cfg.notify_enabled);
+    app.set_notify_success(cfg.notify_success);
+    app.set_notify_timeout(cfg.notify_timeout);
+    app.set_notify_policy(cfg.notify_policy);
+    app.set_notify_other(cfg.notify_other);
+
+    let c = &cfg.checks;
+    app.set_chk_nails(c.nails);
+    app.set_chk_orient(c.orient);
+    app.set_chk_expression(c.expression);
+    app.set_chk_outfit(c.outfit);
+    app.set_chk_legwear(c.legwear);
+    app.set_chk_environment(c.environment);
+    app.set_chk_atmosphere(c.atmosphere);
+    app.set_chk_pose(c.pose);
+    app.set_chk_lighting(c.lighting);
+    app.set_chk_camera(c.camera);
+    app.set_chk_rare(c.rare);
+    app.set_chk_accessories(c.accessories);
+    app.set_chk_makeup(c.makeup);
+    app.set_chk_body_type(c.body_type);
+    app.set_chk_age_vibe(c.age_vibe);
+    app.set_chk_color_palette(c.color_palette);
+    app.set_chk_time_of_day(c.time_of_day);
+    app.set_chk_weather(c.weather);
+    app.set_chk_bg_props(c.bg_props);
+    app.set_chk_material(c.material);
+    app.set_chk_motion(c.motion);
+    app.set_chk_curated(c.curated);
+    app.set_chk_auto_b(c.auto_b);
+}
+
+/// Lee el estado actual de la interfaz para guardarlo.
+///
+/// `manual` es la copia de las casillas de antes de activar el Super
+/// Randomizer. Si existe, se guarda ésa: lo contrario sería registrar la
+/// última tirada aleatoria como si fuera la elección del usuario.
+fn collect_config(
+    app: &MainWindow,
+    manual: Option<&config::Checks>,
+    bank: &[String],
+) -> config::Config {
+    config::Config {
+        skin: app.get_skin_index(),
+        output_folder: app.get_output_folder().to_string(),
+        model_index: app.get_model_index(),
+        resolution_idx: app.get_resolution_idx(),
+        interval_secs: app.get_interval_secs(),
+        current_mode: app.get_current_mode(),
+        theme_index: app.get_theme_index(),
+        i2i_mode_index: app.get_i2i_mode_index(),
+        rand_active: app.get_rand_active(),
+        super_rand_active: app.get_super_rand_active(),
+        prompts: bank.to_vec(),
+        prompt_slot: app.get_prompt_slot_index(),
+        prompt_random: app.get_prompt_random_active(),
+        notify_enabled: app.get_notify_enabled(),
+        notify_success: app.get_notify_success(),
+        notify_timeout: app.get_notify_timeout(),
+        notify_policy: app.get_notify_policy(),
+        notify_other: app.get_notify_other(),
+        checks: manual.cloned().unwrap_or_else(|| config::Checks {
+            nails: app.get_chk_nails(),
+            orient: app.get_chk_orient(),
+            expression: app.get_chk_expression(),
+            outfit: app.get_chk_outfit(),
+            legwear: app.get_chk_legwear(),
+            environment: app.get_chk_environment(),
+            atmosphere: app.get_chk_atmosphere(),
+            pose: app.get_chk_pose(),
+            lighting: app.get_chk_lighting(),
+            camera: app.get_chk_camera(),
+            rare: app.get_chk_rare(),
+            accessories: app.get_chk_accessories(),
+            makeup: app.get_chk_makeup(),
+            body_type: app.get_chk_body_type(),
+            age_vibe: app.get_chk_age_vibe(),
+            color_palette: app.get_chk_color_palette(),
+            time_of_day: app.get_chk_time_of_day(),
+            weather: app.get_chk_weather(),
+            bg_props: app.get_chk_bg_props(),
+            material: app.get_chk_material(),
+            motion: app.get_chk_motion(),
+            curated: app.get_chk_curated(),
+            auto_b: app.get_chk_auto_b(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slint::Model;
+
+    #[test]
+    fn el_log_no_crece_sin_limite() {
+        let mut s = String::new();
+        for i in 0..20_000 {
+            s.push_str(&format!("[12:00:00] [INFO] línea de log número {i} con acentos áéí\n"));
+            s = trim_log(&s);
+        }
+        assert!(s.len() <= LOG_MAX_BYTES, "el log superó el tope: {}", s.len());
+        assert!(s.contains("19999"), "debe conservar las líneas más recientes");
+    }
+
+    #[test]
+    fn el_recorte_del_log_respeta_caracteres_multibyte() {
+        // Relleno con caracteres de 2 bytes para forzar cortes en frontera.
+        let s = "ñ".repeat(LOG_MAX_BYTES);
+        let out = trim_log(&s); // no debe entrar en pánico
+        assert!(
+            out.len() < s.len(),
+            "una línea sin saltos también debe recortarse ({} -> {})",
+            s.len(),
+            out.len()
+        );
+
+        // Repetido muchas veces, debe converger y no crecer sin límite.
+        let mut acc = String::new();
+        for _ in 0..50 {
+            acc.push_str(&"ñ".repeat(20_000));
+            acc = trim_log(&acc);
+        }
+        assert!(acc.len() <= LOG_MAX_BYTES + 64, "no converge: {}", acc.len());
+    }
+
+    #[test]
+    fn la_lista_de_la_ui_sale_de_la_tabla_de_modelos() {
+        // Ya no puede desincronizarse: se genera. El test protege de que
+        // alguien vuelva a escribirla a mano en el .slint.
+        let etiquetas = models::labels();
+        assert_eq!(etiquetas.len(), models::CATALOG.len());
+        assert!(etiquetas.iter().any(|e| e.starts_with("Kie.AI")));
+
+        if let Ok(app) = MainWindow::new() {
+            // El valor por defecto declarado en el .slint debe estar vacío.
+            assert_eq!(
+                app.get_model_list().row_count(),
+                0,
+                "ui/main.slint ha vuelto a llevar la lista de modelos escrita a mano"
+            );
+        }
+    }
 }

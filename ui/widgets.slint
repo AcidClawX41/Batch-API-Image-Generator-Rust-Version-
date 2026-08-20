@@ -1,0 +1,556 @@
+// ui/widgets.slint — Controles propios pintados sobre `Theme`.
+//
+// Batch Image Generator — Eric Valls Gramunt
+//
+// Sustituyen a los de `std-widgets.slint`. La diferencia importante es que
+// estos NO consultan la paleta del sistema operativo: todo su color sale del
+// global `Theme`, así que el aspecto es idéntico en Linux, Windows y macOS y
+// cambia al instante al conmutar de skin.
+//
+// Convención de nombres: prefijo `T` (TButton, TCheckBox…) para no chocar con
+// los widgets estándar si en algún momento se importan a la vez.
+
+import { Theme } from "theme.slint";
+
+// ─── Botón ───────────────────────────────────────────────────────────────
+
+export component TButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    // `primary` pinta el botón con el color de acento (acciones principales).
+    in property <bool> primary: false;
+    // Color de realce opcional; si se define, manda sobre `primary`.
+    in property <brush> accent-color: Theme.accent;
+    in property <bool> use-accent-color: false;
+    in property <length> font-size: 12px;
+    callback clicked();
+
+    min-height: Theme.row-h;
+    horizontal-stretch: 0;
+    border-radius: Theme.radius;
+    border-width: 1px;
+
+    property <brush> fill:
+        !root.enabled ? Theme.field
+        : (root.use-accent-color || root.primary)
+            ? (touch.pressed ? Theme.accent-hover
+               : touch.has-hover ? Theme.accent-hover
+               : (root.use-accent-color ? root.accent-color : Theme.accent))
+        : (touch.pressed ? Theme.border
+           : touch.has-hover ? Theme.field-hover
+           : Theme.field);
+
+    background: root.fill;
+    border-color: !root.enabled ? Theme.border
+                : (root.use-accent-color || root.primary) ? Theme.accent-hover
+                : (touch.has-hover ? Theme.border-strong : Theme.border);
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.text;
+            font-size: root.font-size;
+            font-weight: (root.primary || root.use-accent-color) ? 700 : 500;
+            color: !root.enabled ? Theme.text-disabled
+                 : (root.primary || root.use-accent-color) ? Theme.on-accent
+                 : Theme.text;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ─── Casilla de verificación ─────────────────────────────────────────────
+//
+// Este es el control que resultaba invisible en la 2.4.0: el CheckBox de
+// std-widgets pintaba su etiqueta con el color de texto del SO (oscuro en
+// modo claro) sobre el fondo casi negro de la ventana.
+
+export component TCheckBox inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled();
+
+    min-height: 26px;
+    background: transparent;
+
+    HorizontalLayout {
+        spacing: 7px;
+        padding-left: 2px;
+        alignment: start;
+
+        // Caja
+        Rectangle {
+            width: 17px;
+            height: 17px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3px;
+            border-width: root.checked ? 0px : 1.5px;
+            border-color: !root.enabled ? Theme.border
+                        : touch.has-hover ? Theme.accent
+                        : Theme.border-strong;
+            background: root.checked
+                ? (root.enabled ? Theme.accent : Theme.text-disabled)
+                : (touch.has-hover && root.enabled ? Theme.field-hover : Theme.field);
+
+            Text {
+                text: "✓";
+                visible: root.checked;
+                color: Theme.on-accent;
+                font-size: 13px;
+                font-weight: 900;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+        }
+
+        // Etiqueta — siempre con color propio del tema, nunca del SO.
+        Text {
+            text: root.text;
+            font-size: 11.5px;
+            font-weight: root.checked ? 600 : 400;
+            color: root.enabled ? Theme.text : Theme.text-disabled;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+// ─── Campo de texto de una línea ─────────────────────────────────────────
+
+export component TLineEdit inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder-text;
+    in property <bool> enabled: true;
+    in property <bool> password: false;
+    in property <length> font-size: 12px;
+    callback edited();
+
+    min-height: Theme.row-h;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    background: root.enabled ? Theme.field : Theme.surface;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    forward-focus: input;
+
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+
+        Rectangle {
+            clip: true;
+
+            // Marca de agua: se pinta debajo, sólo si no hay texto.
+            Text {
+                text: root.placeholder-text;
+                visible: root.text == "";
+                color: Theme.text-disabled;
+                font-size: root.font-size;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+                overflow: elide;
+            }
+
+            input := TextInput {
+                text <=> root.text;
+                enabled: root.enabled;
+                color: root.enabled ? Theme.text : Theme.text-disabled;
+                selection-background-color: Theme.accent;
+                selection-foreground-color: Theme.on-accent;
+                font-size: root.font-size;
+                vertical-alignment: center;
+                single-line: true;
+                input-type: root.password ? InputType.password : InputType.text;
+                width: 100%;
+                height: 100%;
+                edited => { root.edited(); }
+            }
+        }
+    }
+
+    // Sin `TouchArea` encima: el `TextInput` gestiona el ratón por su cuenta
+    // (colocar el cursor, arrastrar para seleccionar, doble clic para elegir
+    // palabra). Un TouchArea superpuesto se traga esos eventos y el campo se
+    // vuelve casi ineditable. El `TextEdit` de Slint tampoco lleva ninguno.
+}
+
+// ─── Área de texto multilínea ────────────────────────────────────────────
+
+export component TTextEdit inherits Rectangle {
+    in-out property <string> text;
+    in property <bool> read-only: false;
+    in property <bool> enabled: true;
+    in property <length> font-size: 12px;
+    // Para el log: mantiene la vista pegada al final al añadir líneas.
+    in property <bool> stick-to-bottom: false;
+
+    border-radius: Theme.radius;
+    border-width: 1px;
+    background: root.read-only ? Theme.surface : Theme.field;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    clip: true;
+    forward-focus: input;
+
+    flick := Flickable {
+        x: 8px;
+        y: 6px;
+        width: parent.width - 16px;
+        height: parent.height - 12px;
+        viewport-width: self.width;
+        viewport-height: max(self.height, input.preferred-height);
+
+
+        // Auto-scroll al final (log). Se expresa como estado y no como
+        // binding directo sobre `viewport-y` para no crear un ciclo: en el
+        // resto de casos la propiedad conserva el valor que fija el usuario
+        // al desplazarse.
+        states [
+            at-bottom when root.stick-to-bottom: {
+                flick.viewport-y: min(0px, flick.height - flick.viewport-height);
+            }
+        ]
+
+        input := TextInput {
+            text <=> root.text;
+            enabled: root.enabled;
+            read-only: root.read-only;
+            color: root.enabled ? Theme.text : Theme.text-disabled;
+            selection-background-color: Theme.accent;
+            selection-foreground-color: Theme.on-accent;
+            font-size: root.font-size;
+            single-line: false;
+            wrap: word-wrap;
+            width: flick.width;
+            page-height: flick.height;
+
+            // Mantener el cursor a la vista al escribir o navegar. Sin esto,
+            // en un prompt largo el texto se sale de la zona visible y el
+            // campo parece haberse quedado colgado.
+            cursor-position-changed(cpos) => {
+                if (cpos.y + flick.viewport-y < 6px) {
+                    flick.viewport-y = min(0px, -cpos.y + 6px);
+                } else if (cpos.y + flick.viewport-y > flick.height - 26px) {
+                    flick.viewport-y = min(0px, max(
+                        flick.height - flick.viewport-height,
+                        flick.height - cpos.y - 26px
+                    ));
+                }
+            }
+        }
+    }
+
+    // Igual que en TLineEdit: nada superpuesto que intercepte el ratón.
+}
+
+// ─── Desplegable ─────────────────────────────────────────────────────────
+//
+// Se dibuja con un PopupWindow propio en lugar del ComboBox nativo, cuyo
+// menú desplegable se pinta siempre con la paleta del sistema.
+
+export component TComboBox inherits Rectangle {
+    in property <[string]> model;
+    in-out property <int> current-index: 0;
+    in property <bool> enabled: true;
+    in property <length> font-size: 12px;
+    // Alto máximo del desplegable antes de empezar a hacer scroll.
+    in property <length> popup-max-height: 320px;
+    callback selected();
+
+    property <length> item-h: 27px;
+    property <length> list-h: min(root.popup-max-height, root.model.length * root.item-h + 8px);
+
+    min-height: Theme.row-h;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    background: !root.enabled ? Theme.surface
+              : touch.has-hover ? Theme.field-hover
+              : Theme.field;
+    border-color: !root.enabled ? Theme.border
+                : touch.has-hover ? Theme.border-strong
+                : Theme.border;
+
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 8px;
+        spacing: 6px;
+
+        Text {
+            text: root.current-index >= 0 && root.current-index < root.model.length
+                ? root.model[root.current-index] : "";
+            color: root.enabled ? Theme.text : Theme.text-disabled;
+            font-size: root.font-size;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: "▾";
+            color: root.enabled ? Theme.text-dim : Theme.text-disabled;
+            font-size: 11px;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => { popup.show(); }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 2px;
+        width: root.width;
+        height: root.list-h;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Theme.surface;
+            border-color: Theme.border-strong;
+            border-width: 1px;
+            border-radius: Theme.radius;
+            clip: true;
+
+            Flickable {
+                x: 4px;
+                y: 4px;
+                width: parent.width - 8px;
+                height: parent.height - 8px;
+                viewport-width: self.width;
+                viewport-height: root.model.length * root.item-h;
+
+                for item[idx] in root.model: Rectangle {
+                    y: idx * root.item-h;
+                    width: parent.width;
+                    height: root.item-h;
+                    border-radius: 3px;
+                    background: idx == root.current-index ? Theme.accent
+                              : item-touch.has-hover ? Theme.field-hover
+                              : transparent;
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        Text {
+                            text: item;
+                            color: idx == root.current-index ? Theme.on-accent : Theme.text;
+                            font-size: root.font-size;
+                            font-weight: idx == root.current-index ? 700 : 400;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+
+                    item-touch := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => {
+                            root.current-index = idx;
+                            root.selected();
+                            popup.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─── Selector numérico ───────────────────────────────────────────────────
+
+export component TSpinBox inherits Rectangle {
+    in-out property <int> value: 0;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <int> step: 1;
+    in property <bool> enabled: true;
+
+    min-width: 108px;
+    min-height: Theme.row-h;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    background: Theme.field;
+    border-color: Theme.border;
+
+    function clamp-value(v: int) -> int {
+        return max(root.minimum, min(root.maximum, v));
+    }
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 2px;
+
+        TButton {
+            text: "−";
+            enabled: root.enabled && root.value > root.minimum;
+            width: 26px;
+            font-size: 14px;
+            clicked => { root.value = root.clamp-value(root.value - root.step); }
+        }
+        Text {
+            text: root.value;
+            color: root.enabled ? Theme.text : Theme.text-disabled;
+            font-size: 12px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        TButton {
+            text: "+";
+            enabled: root.enabled && root.value < root.maximum;
+            width: 26px;
+            font-size: 14px;
+            clicked => { root.value = root.clamp-value(root.value + root.step); }
+        }
+    }
+}
+
+// ─── Barra de progreso ───────────────────────────────────────────────────
+
+export component TProgress inherits Rectangle {
+    // 0.0 – 1.0, o `indeterminate` para la animación continua.
+    in property <float> progress: 0;
+    in property <bool> indeterminate: false;
+
+    height: 12px;
+    border-radius: 6px;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+
+    // Barra determinada
+    Rectangle {
+        visible: !root.indeterminate;
+        x: 0;
+        width: parent.width * max(0.0, min(1.0, root.progress));
+        height: parent.height;
+        border-radius: 6px;
+        background: Theme.accent;
+        animate width { duration: 220ms; easing: ease-out; }
+    }
+
+    // Barra indeterminada: bloque que recorre la pista.
+    Rectangle {
+        visible: root.indeterminate;
+        width: parent.width * 35%;
+        height: parent.height;
+        border-radius: 6px;
+        background: Theme.accent;
+        x: anim.progress * (parent.width + self.width) - self.width;
+
+        anim := Rectangle {
+            property <float> progress: 0;
+            width: 0px;
+            height: 0px;
+            states [
+                running when root.indeterminate: {
+                    progress: 1.0;
+                    in { animate progress { duration: 1300ms; iteration-count: -1; easing: ease-in-out; } }
+                }
+            ]
+        }
+    }
+}
+
+// ─── Panel con título ────────────────────────────────────────────────────
+
+export component TGroupBox inherits Rectangle {
+    in property <string> title;
+    in property <brush> title-color: Theme.text-dim;
+
+    background: Theme.surface;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 7px;
+
+        Text {
+            text: root.title;
+            color: root.title-color;
+            font-size: 11.5px;
+            font-weight: 700;
+            visible: root.title != "";
+        }
+
+        @children
+    }
+}
+
+// ─── Vista con desplazamiento ────────────────────────────────────────────
+//
+// Flickable + barra dibujada a mano: la de `std-widgets` se pinta con la
+// paleta del SO y desentonaba con las skins.
+
+export component TScrollView inherits Rectangle {
+    in property <length> viewport-height: 0px;
+    out property <length> visible-height: flick.height;
+
+    background: transparent;
+    clip: true;
+
+    flick := Flickable {
+        width: parent.width - 10px;
+        height: parent.height;
+        viewport-width: self.width;
+        viewport-height: root.viewport-height;
+
+        @children
+    }
+
+    // Pista
+    Rectangle {
+        x: parent.width - 8px;
+        width: 6px;
+        y: 2px;
+        height: parent.height - 4px;
+        border-radius: 3px;
+        background: Theme.field;
+        visible: root.viewport-height > flick.height;
+
+        // Pulgar
+        Rectangle {
+            width: parent.width;
+            border-radius: 3px;
+            background: bar-touch.has-hover || bar-touch.pressed
+                ? Theme.accent : Theme.border-strong;
+            height: max(30px, parent.height * (flick.height / max(1px, root.viewport-height)));
+            y: (parent.height - self.height)
+               * (-flick.viewport-y / max(1px, root.viewport-height - flick.height));
+        }
+
+        bar-touch := TouchArea {
+            moved => {
+                flick.viewport-y = max(
+                    min(0px, flick.height - root.viewport-height),
+                    min(0px, flick.viewport-y - (self.mouse-y - self.pressed-y))
+                );
+            }
+        }
+    }
+}

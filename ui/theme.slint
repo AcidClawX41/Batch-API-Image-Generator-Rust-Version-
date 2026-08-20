@@ -1,0 +1,104 @@
+// ui/theme.slint — Sistema de skins conmutable en runtime.
+//
+// Batch Image Generator — Eric Valls Gramunt
+//
+// MOTIVO DE ESTE ARCHIVO
+// ----------------------
+// La versión 2.4.0 usaba los widgets de `std-widgets.slint`, que toman su
+// paleta del sistema operativo (fluent en Windows/Linux, cupertino en macOS,
+// y variante clara u oscura según la preferencia del escritorio). El resto de
+// la interfaz, en cambio, tenía un tema oscuro fijo. En Ubuntu en modo claro
+// eso producía widgets claros y etiquetas oscuras sobre un fondo casi negro:
+// texto ilegible.
+//
+// El global `Palette` de Slint sólo permite escribir `color-scheme` en tiempo
+// de ejecución; sus colores son de sólo lectura. Por eso aquí definimos una
+// paleta propia y dibujamos los controles nosotros (ver `widgets.slint`), de
+// modo que el aspecto sea idéntico en Linux, Windows y macOS y no dependa de
+// la configuración del escritorio.
+
+export global Theme {
+    // 0 = Dark · 1 = Light · 2 = Cyberpunk
+    in-out property <int> skin: 0;
+
+    out property <bool> is-dark: root.skin != 1;
+
+    // ── Superficies ──────────────────────────────────────────────────────
+    out property <color> bg:
+        root.skin == 1 ? #f4f5f7 : root.skin == 2 ? #0a0a12 : #12141a;
+
+    out property <color> surface:
+        root.skin == 1 ? #ffffff : root.skin == 2 ? #121228 : #1c1f27;
+
+    // Fondo de campos editables y controles
+    out property <color> field:
+        root.skin == 1 ? #ffffff : root.skin == 2 ? #171736 : #232733;
+
+    out property <color> field-hover:
+        root.skin == 1 ? #eef1f6 : root.skin == 2 ? #1f1f45 : #2b3040;
+
+    out property <color> border:
+        root.skin == 1 ? #c9cdd6 : root.skin == 2 ? #2f2f66 : #333a48;
+
+    out property <color> border-strong:
+        root.skin == 1 ? #98a0af : root.skin == 2 ? #4a4a99 : #4d566b;
+
+    // ── Texto ────────────────────────────────────────────────────────────
+    // `text-dim` se usa en decenas de etiquetas. En la 2.4.0 era #888888
+    // sobre #0d0d0d (contraste ~4.0:1, por debajo de AA). Aquí se sube en
+    // todas las skins para que las etiquetas sean legibles de verdad.
+    out property <color> text:
+        root.skin == 1 ? #1a1c22 : root.skin == 2 ? #e2f6ff : #e8eaf0;
+
+    out property <color> text-dim:
+        root.skin == 1 ? #48505f : root.skin == 2 ? #a9c4dc : #aab3c4;
+
+    // Texto de controles deshabilitados: atenuado pero todavía legible.
+    out property <color> text-disabled:
+        root.skin == 1 ? #8b93a2 : root.skin == 2 ? #6a7fa0 : #767f92;
+
+    // ── Acento ───────────────────────────────────────────────────────────
+    out property <color> accent:
+        root.skin == 1 ? #2f6fd0 : root.skin == 2 ? #ff2fb9 : #5b8cd4;
+
+    out property <color> accent-hover:
+        root.skin == 1 ? #2a63bb : root.skin == 2 ? #ff56c8 : #6d9ade;
+
+    out property <color> on-accent:
+        root.skin == 2 ? #0a0a12 : #ffffff;
+
+    // ── Semánticos ───────────────────────────────────────────────────────
+    out property <color> green:
+        root.skin == 1 ? #1c7f39 : root.skin == 2 ? #39ff88 : #6fcf6f;
+
+    out property <color> red:
+        root.skin == 1 ? #b3291b : root.skin == 2 ? #ff3b6b : #e06c6c;
+
+    out property <color> purple:
+        root.skin == 1 ? #6f45a8 : root.skin == 2 ? #b76bff : #b08cdf;
+
+    out property <color> cyan:
+        root.skin == 1 ? #0b6f86 : root.skin == 2 ? #00e5ff : #7cc8dd;
+
+    out property <color> yellow:
+        root.skin == 1 ? #8a5a06 : root.skin == 2 ? #ffe14d : #f0c674;
+
+    out property <color> orange:
+        root.skin == 1 ? #a0480a : root.skin == 2 ? #ff9d3d : #e0a060;
+
+    // Fondos tenues para los slots de imagen cargada.
+    out property <color> tint-green:
+        root.skin == 1 ? #e6f5ea : root.skin == 2 ? #0d2a1c : #16241a;
+    out property <color> tint-cyan:
+        root.skin == 1 ? #e4f1f5 : root.skin == 2 ? #06283a : #142027;
+    out property <color> tint-purple:
+        root.skin == 1 ? #f0e9f8 : root.skin == 2 ? #21103a : #1f1a2b;
+    out property <color> tint-orange:
+        root.skin == 1 ? #fbeee2 : root.skin == 2 ? #33220a : #26200f;
+    out property <color> tint-yellow:
+        root.skin == 1 ? #faf3dc : root.skin == 2 ? #332c0a : #24220f;
+
+    // ── Métrica ──────────────────────────────────────────────────────────
+    out property <length> radius: 5px;
+    out property <length> row-h: 30px;
+}
