@@ -436,7 +436,14 @@ pub const ULTRA_RARE_DETAILS: &[&str] = &[
 // ─── THEME PRESETS ───
 
 pub struct ThemePreset {
+    /// Identificador estable del preset. Sin uso hoy: la interfaz selecciona
+    /// por índice. Necesario en cuanto los presets se guarden en la
+    /// configuración, donde un índice no es un identificador fiable.
+    #[allow(dead_code)]
     pub key: &'static str,
+    /// Etiqueta legible. Hoy la lista de temas está duplicada a mano en
+    /// `ui/main.slint`; debería alimentarse desde aquí.
+    #[allow(dead_code)]
     pub label: &'static str,
     pub base: &'static str,
     pub outfits: Option<&'static [&'static str]>,

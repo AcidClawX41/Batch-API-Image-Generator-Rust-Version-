@@ -1,0 +1,73 @@
+# CI — verifica cada push y cada pull request.
+#
+# El repositorio sólo tenía `release.yml`, que se dispara con
+# `on: release: published`. Es decir: nada comprobaba que `main` compilara.
+# Se podía romper la rama principal y no descubrirlo hasta publicar la
+# release, cuando el build fallaba en los tres runners a la vez.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Instalar dependencias de Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            pkg-config \
+            cmake
+
+      - name: Compilar
+        run: cargo build --verbose
+
+      - name: Tests
+        run: cargo test --verbose
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  format:
+    name: Formato
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # Informativo: el código actual no está formateado con rustfmt y
+      # aplicarlo de golpe generaría un diff enorme que enmascararía los
+      # cambios reales. Se deja sin `-D` hasta decidir hacer ese barrido.
+      - name: cargo fmt --check
+        run: cargo fmt --check
+        continue-on-error: true
