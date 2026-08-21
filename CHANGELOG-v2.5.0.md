@@ -475,6 +475,83 @@ dunst, con las cuatro líneas correctas apareciendo en el log de la aplicación.
 
 ---
 
+## 10 ter. Modelos de WaveSpeed que no aceptaban la imagen
+
+Tres fallos distintos vistos en uso real, con el mismo síntoma aparente
+(«no genera»).
+
+### A. `Invalid request body: field "image" is required`
+
+Afectaba a **WAN 2.2** y **Qwen Image Edit** con una imagen cargada.
+
+**Causa raíz — mía.** Al montar la tabla de modelos di por hecho que todos los
+endpoints de edición de WaveSpeed reciben `images` (array). No es así: cada
+modelo tiene su propio contrato, y esos dos esperan `image`, una sola cadena.
+Es exactamente el mismo error que cometí con Nano Banana 2 Lite: configurar
+por analogía en vez de por documentación.
+
+Verificado uno a uno contra la documentación oficial:
+
+| Modelo | Campo | Máximo | Estado |
+|---|---|---|---|
+| WAN 2.2 (`wan-2.2/image-to-image`) | `image` | 1 | **corregido** (era `images`, 2) |
+| Qwen Image Edit (`qwen-image/edit`) | `image` | 1 | **corregido** (era `images`, 5) |
+| WAN 2.7 Edit (`wan-2.7/image-edit`) | `images` | 3 | máximo subido de 2 a 3 |
+| Grok Imagine Edit | `image` | 1 | ya era correcto |
+| UNO, Flux Kontext Multi | `images` | 5 | ya era correcto |
+| Nano Banana 2 / Pro, Seedream, GPT Image 2, Flux 2 Klein | `images` | 5 | correcto (el modelo admite más; la ventana expone 5 huecos) |
+
+### B. La descarga tiraba una generación ya pagada
+
+**WAN 2.7 Edit** falló con `Error descargando imagen: error sending request
+for url (…cloudfront.net…)`. La API había respondido bien: lo que se cortó fue
+la descarga desde la CDN.
+
+Es una asimetría que no estaba contemplada: cuando la descarga falla **el
+trabajo ya está hecho y ya está cobrado**. Repetir una descarga es gratis;
+repetir una generación no.
+
+Ahora hay hasta 4 intentos con espera de 1 s, 2 s y 4 s, y se distingue lo
+transitorio de lo definitivo: se reintenta ante timeout, corte de conexión,
+corte a mitad del cuerpo, 5xx y 429; **no** se reintenta ante 404 o 403, que
+en una URL firmada significan caducada y sólo harían perder tiempo. El
+reintento se ve en el log, y si aun así se agota, la URL de la imagen queda
+escrita para poder rescatarla a mano antes de que expire.
+
+### C. Las pistas de las casillas de imagen mentían
+
+Los textos «★ Solo Flux Kontext Multi / UNO» y «Img 1+2: xAI Grok · Img 1:
+OpenAI/Flux Kontext/WAN» estaban escritos a mano y se quedaron viejos en
+cuanto cambió la tabla. Peor: contradecían a lo que la aplicación enviaba.
+
+Ahora salen del modelo seleccionado. Rust publica los máximos en paralelo a
+los nombres, y la ventana avisa **antes** de generar:
+
+- un hueco que el modelo no admite lo dice en el propio hueco;
+- una imagen cargada que se va a descartar sale en naranja con «el modelo
+  elegido no la usará»;
+- el resumen dice cuántas de cuántas están en uso.
+
+### Prevención
+
+Cinco tests nuevos, todos rápidos y sin llamadas a la API:
+
+| Test | Qué impide |
+|---|---|
+| `el_cuerpo_de_wavespeed_usa_el_campo_documentado_de_cada_modelo` | Comprueba el JSON exacto que sale por el cable para los cinco modelos afectados: nombre del campo, tipo (cadena vs. array) y que no se envíe el otro |
+| `los_campos_de_imagen_de_wavespeed_estan_verificados` | Fija los valores comprobados contra la documentación |
+| `el_campo_de_imagen_unica_solo_admite_una_referencia` | Un campo de una sola imagen no puede anunciar varias |
+| `una_descarga_cortada_se_reintenta_y_se_recupera` | Servidor local que corta dos veces y responde a la tercera |
+| `un_404_no_se_reintenta` | Que un fallo definitivo no gaste cuatro intentos |
+| `los_maximos_de_referencias_van_en_paralelo_a_los_nombres` | Que la ventana no enseñe el máximo de otro modelo |
+
+Para poder probar el cuerpo de la petición sin gastar créditos, la
+construcción del JSON se ha separado de la llamada de red
+(`wavespeed_body()`). El bug original sólo era visible enviando la petición de
+verdad; ahora se detecta en medio milisegundo.
+
+---
+
 ## 11. Pendiente para la v2.6
 
 1. **Guardar el prompt y la semilla junto a cada imagen.** Con `seed: -1`

@@ -288,7 +288,7 @@ async fn save_openai_payload(
             .map_err(|e| format!("Error decodificando base64: {}", e))?;
         save_image(provider, &bytes, output_dir, ext_from_magic(&bytes, None))
     } else if let Some(url) = first.url.as_deref() {
-        download_and_save_for(provider, url, output_dir).await
+        download_and_save_for(provider, url, output_dir, None).await
     } else {
         Err("Sin datos base64 ni URL en la respuesta.".to_string())
     }
@@ -527,22 +527,21 @@ fn wavespeed_size(spec: &ModelSpec, output_resolution: &str) -> &'static str {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn generate_wavespeed(
+/// Construye el cuerpo JSON de una petición a WaveSpeed.
+///
+/// Está separado de la llamada de red **para poder probarlo**. El fallo
+/// «Invalid request body: field "image" is required» de WAN 2.2 y Qwen Image
+/// Edit sólo se veía enviando la petición de verdad y gastando créditos; con
+/// esto se comprueba en un test de medio milisegundo.
+fn wavespeed_body(
     spec: &ModelSpec,
-    api_key: &str,
+    model: &str,
     prompt: &str,
-    output_dir: &str,
     ref_images: &[RefImage],
     i2i_mode: I2iMode,
     output_resolution: &str,
-    progress: &ProgressFn,
-) -> Result<GenerationResult, String> {
+) -> Result<serde_json::Value, String> {
     let has_refs = !ref_images.is_empty();
-    let model = spec
-        .wire_id(has_refs)
-        .ok_or("Modelo sin identificador para este modo.")?;
-    let url = format!("{}/{}", WAVESPEED_BASE, model);
 
     let mut body = serde_json::json!({
         "prompt": prompt,
@@ -570,7 +569,8 @@ async fn generate_wavespeed(
             .collect();
 
         // El nombre del campo sale de la tabla, no de adivinar por subcadenas
-        // del identificador.
+        // del identificador. Cada valor está verificado contra la
+        // documentación del modelo (URL junto a su entrada en models.rs).
         match spec.ref_field {
             RefField::WsImage => {
                 body["image"] = serde_json::Value::String(data_uris[0].clone());
@@ -586,6 +586,35 @@ async fn generate_wavespeed(
             }
         }
     }
+
+    Ok(body)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn generate_wavespeed(
+    spec: &ModelSpec,
+    api_key: &str,
+    prompt: &str,
+    output_dir: &str,
+    ref_images: &[RefImage],
+    i2i_mode: I2iMode,
+    output_resolution: &str,
+    progress: &ProgressFn,
+) -> Result<GenerationResult, String> {
+    let has_refs = !ref_images.is_empty();
+    let model = spec
+        .wire_id(has_refs)
+        .ok_or("Modelo sin identificador para este modo.")?;
+    let url = format!("{}/{}", WAVESPEED_BASE, model);
+
+    let body = wavespeed_body(
+        spec,
+        model,
+        prompt,
+        ref_images,
+        i2i_mode,
+        output_resolution,
+    )?;
 
     let resp = http()
         .post(&url)
@@ -653,7 +682,7 @@ async fn handle_wavespeed_response(
     if data.status.as_deref() == Some("completed") {
         let outputs = data.outputs.ok_or("WaveSpeed completó pero sin outputs.")?;
         let url = outputs.first().ok_or("Lista de outputs vacía.")?;
-        return download_and_save_for(ImageProvider::WaveSpeed, url, output_dir).await;
+        return download_and_save_for(ImageProvider::WaveSpeed, url, output_dir, Some(progress)).await;
     }
 
     let task_id = data
@@ -712,7 +741,7 @@ async fn poll_wavespeed(
                     .as_ref()
                     .and_then(|o| o.first())
                     .ok_or("WaveSpeed completó pero sin URLs de output.")?;
-                return download_and_save_for(ImageProvider::WaveSpeed, url, output_dir).await;
+                return download_and_save_for(ImageProvider::WaveSpeed, url, output_dir, Some(progress)).await;
             }
             Some("failed") => {
                 return Err(format!(
@@ -1139,7 +1168,7 @@ async fn poll_kie(
                         take_chars(&result_json, 200)
                     )
                 })?;
-                return download_and_save_for(ImageProvider::KieAi, &image_url, output_dir).await;
+                return download_and_save_for(ImageProvider::KieAi, &image_url, output_dir, Some(progress)).await;
             }
             Some("fail") => {
                 let code = data
@@ -1275,23 +1304,56 @@ fn ext_from_magic(bytes: &[u8], content_type: Option<&str>) -> &'static str {
     }
 }
 
-async fn download_and_save_for(
-    provider: ImageProvider,
-    url: &str,
-    output_dir: &str,
-) -> Result<GenerationResult, String> {
+/// Intentos de descarga de la imagen ya generada.
+///
+/// POR QUÉ HAY REINTENTOS
+/// ----------------------
+/// Cuando la descarga falla, el trabajo **ya está hecho y ya está pagado**:
+/// el proveedor generó la imagen y nos dio su URL. Un corte de red de un
+/// segundo contra la CDN tiraba a la basura una generación entera. Se observó
+/// en uso real con WAN 2.7 Edit: la API respondió correctamente y la descarga
+/// desde CloudFront murió con «error sending request for url».
+///
+/// Es la asimetría lo que justifica reintentar aquí y no en la petición de
+/// generación: repetir una descarga es gratis, repetir una generación no.
+const DESCARGA_INTENTOS: u32 = 4;
+
+/// Resultado de un intento: el mensaje y si merece la pena repetir.
+struct FalloDescarga {
+    mensaje: String,
+    reintentable: bool,
+}
+
+/// Devuelve los bytes y el `Content-Type` de un intento.
+///
+/// Se convierte a `Vec<u8>` en vez de exponer `bytes::Bytes` para no añadir
+/// una dependencia directa sólo por un tipo de retorno interno.
+async fn intento_de_descarga(url: &str) -> Result<(Vec<u8>, Option<String>), FalloDescarga> {
     let resp = http()
         .get(url)
         .timeout(std::time::Duration::from_secs(120))
         .send()
         .await
-        .map_err(|e| format!("Error descargando imagen: {}", e))?;
+        .map_err(|e| FalloDescarga {
+            mensaje: if e.is_timeout() {
+                "la CDN tardó más de 120 s".to_string()
+            } else if e.is_connect() {
+                format!("no se pudo conectar con la CDN: {e}")
+            } else {
+                format!("{e}")
+            },
+            // Timeouts y cortes de conexión son transitorios por definición.
+            reintentable: true,
+        })?;
 
-    if !resp.status().is_success() {
-        return Err(format!(
-            "Error descargando imagen: HTTP {}",
-            resp.status().as_u16()
-        ));
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(FalloDescarga {
+            mensaje: format!("HTTP {}", status.as_u16()),
+            // 403/404 en una URL firmada significa caducada o inexistente:
+            // repetir sólo hace perder tiempo. 5xx y 429 sí se reintentan.
+            reintentable: status.is_server_error() || status.as_u16() == 429,
+        });
     }
 
     let content_type = resp
@@ -1300,13 +1362,62 @@ async fn download_and_save_for(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_ascii_lowercase());
 
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Error leyendo bytes de imagen: {}", e))?;
+    // El corte puede llegar a mitad del cuerpo, no sólo al conectar.
+    let bytes = resp.bytes().await.map_err(|e| FalloDescarga {
+        mensaje: format!("la descarga se cortó a medias: {e}"),
+        reintentable: true,
+    })?;
 
-    let ext = ext_from_magic(&bytes, content_type.as_deref());
-    save_image(provider, &bytes, output_dir, ext)
+    Ok((bytes.to_vec(), content_type))
+}
+
+async fn download_and_save_for(
+    provider: ImageProvider,
+    url: &str,
+    output_dir: &str,
+    progress: Option<&ProgressFn>,
+) -> Result<GenerationResult, String> {
+    let aviso = |msg: String| {
+        if let Some(p) = progress {
+            p(msg);
+        }
+    };
+
+    let mut ultimo = String::new();
+    for intento in 1..=DESCARGA_INTENTOS {
+        match intento_de_descarga(url).await {
+            Ok((bytes, content_type)) => {
+                if intento > 1 {
+                    aviso(format!("Descarga recuperada en el intento {intento}."));
+                }
+                let ext = ext_from_magic(&bytes, content_type.as_deref());
+                return save_image(provider, &bytes, output_dir, ext);
+            }
+            Err(fallo) => {
+                ultimo = fallo.mensaje;
+                if !fallo.reintentable || intento == DESCARGA_INTENTOS {
+                    break;
+                }
+                // 1 s, 2 s, 4 s: suficiente para un corte pasajero sin dejar
+                // la aplicación colgada un minuto.
+                let espera = 1u64 << (intento - 1);
+                aviso(format!(
+                    "Fallo al descargar la imagen ({ultimo}). Reintento {}/{} en {espera}s…",
+                    intento + 1,
+                    DESCARGA_INTENTOS
+                ));
+                tokio::time::sleep(std::time::Duration::from_secs(espera)).await;
+            }
+        }
+    }
+
+    // La imagen existe y está pagada: se da la URL para poder rescatarla a
+    // mano antes de que caduque.
+    aviso(format!("URL de la imagen no descargada: {url}"));
+    Err(format!(
+        "La imagen se generó pero no se pudo descargar tras {DESCARGA_INTENTOS} intentos ({ultimo}). \
+         La URL está en el log; cópiala al navegador antes de que caduque."
+    ))
 }
 
 fn format_reqwest_error(provider: ImageProvider, e: reqwest::Error) -> String {
@@ -1325,6 +1436,179 @@ fn format_reqwest_error(provider: ImageProvider, e: reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Servidor mínimo que corta la conexión las `fallos` primeras veces y
+    /// después devuelve un PNG válido. Sirve para comprobar que una descarga
+    /// interrumpida se recupera sola en vez de tirar la generación.
+    fn servidor_que_falla(fallos: usize) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let puerto = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut n = 0;
+            for flujo in listener.incoming() {
+                let Ok(mut flujo) = flujo else { continue };
+                if n < fallos {
+                    n += 1;
+                    // Cerrar sin responder: el cliente ve un corte de red.
+                    drop(flujo);
+                    continue;
+                }
+                let mut buf = [0u8; 1024];
+                let _ = flujo.read(&mut buf);
+                let png: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+                let cabecera = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    png.len()
+                );
+                let _ = flujo.write_all(cabecera.as_bytes());
+                let _ = flujo.write_all(&png);
+                let _ = flujo.flush();
+                return;
+            }
+        });
+        format!("http://127.0.0.1:{puerto}/imagen.png")
+    }
+
+    #[tokio::test]
+    async fn una_descarga_cortada_se_reintenta_y_se_recupera() {
+        let dir = std::env::temp_dir().join(format!(
+            "big-test-descarga-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = servidor_que_falla(2);
+
+        let avisos = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let capturados = avisos.clone();
+        let progress: ProgressFn =
+            std::sync::Arc::new(move |m: String| capturados.lock().unwrap().push(m));
+
+        let res = download_and_save_for(
+            ImageProvider::WaveSpeed,
+            &url,
+            dir.to_str().unwrap(),
+            Some(&progress),
+        )
+        .await;
+
+        assert!(res.is_ok(), "debería recuperarse: {res:?}");
+        let dichos = avisos.lock().unwrap().clone();
+        assert!(
+            dichos.iter().any(|m| m.contains("Reintento")),
+            "el usuario tiene que ver que se está reintentando: {dichos:?}"
+        );
+        assert!(
+            dichos.iter().any(|m| m.contains("recuperada")),
+            "y que se recuperó: {dichos:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Un 404 no se reintenta: la URL no va a aparecer por esperar, y cada
+    /// intento son segundos perdidos.
+    #[tokio::test]
+    async fn un_404_no_se_reintenta() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let puerto = listener.local_addr().unwrap().port();
+        let intentos = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let contador = intentos.clone();
+        std::thread::spawn(move || {
+            for flujo in listener.incoming().take(4) {
+                let Ok(mut flujo) = flujo else { continue };
+                contador.fetch_add(1, Ordering::SeqCst);
+                // Hay que leer la petición antes de contestar: cerrar sin
+                // leerla provoca un RST y el cliente ve un corte de red en
+                // lugar del 404, que es justo lo que este test distingue.
+                let mut buf = [0u8; 1024];
+                let _ = flujo.read(&mut buf);
+                let _ = flujo.write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+                let _ = flujo.flush();
+            }
+        });
+
+        let dir = std::env::temp_dir().join("big-test-404");
+        let res = download_and_save_for(
+            ImageProvider::WaveSpeed,
+            &format!("http://127.0.0.1:{puerto}/no-existe.png"),
+            dir.to_str().unwrap(),
+            None,
+        )
+        .await;
+
+        assert!(res.is_err());
+        assert_eq!(
+            intentos.load(Ordering::SeqCst),
+            1,
+            "un 404 sólo debe intentarse una vez"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// El bug que Eric vio en uso real: WAN 2.2 y Qwen Image Edit contestaban
+    /// `Invalid request body: field "image" is required` porque se les enviaba
+    /// `images` (array). Este test comprueba el cuerpo exacto que sale por el
+    /// cable, sin gastar una sola llamada a la API.
+    #[test]
+    fn el_cuerpo_de_wavespeed_usa_el_campo_documentado_de_cada_modelo() {
+        let refs: Vec<RefImage> = vec![("QUJD".into(), "image/png".into())];
+
+        let casos: &[(&str, &str)] = &[
+            ("WaveSpeed — WAN 2.2", "image"),
+            ("WaveSpeed — Qwen Image Edit", "image"),
+            ("WaveSpeed — Grok Imagine Edit", "image"),
+            ("WaveSpeed — WAN 2.7 Edit", "images"),
+            ("WaveSpeed — UNO", "images"),
+        ];
+
+        for (label, campo) in casos {
+            let spec = crate::models::CATALOG
+                .iter()
+                .find(|m| m.label == *label)
+                .unwrap_or_else(|| panic!("«{label}» ya no está en la tabla"));
+            let model = spec.wire_id(true).expect("debe tener endpoint de I2I");
+            let body =
+                wavespeed_body(spec, model, "un prompt", &refs, I2iMode::DirectEdit, "").unwrap();
+
+            assert!(
+                body.get(campo).is_some(),
+                "«{label}» debe enviar el campo `{campo}`; envió: {}",
+                body
+            );
+            let otro = if *campo == "image" { "images" } else { "image" };
+            assert!(
+                body.get(otro).is_none(),
+                "«{label}» no debe enviar además `{otro}`"
+            );
+
+            // Tipo correcto: cadena para `image`, array para `images`.
+            if *campo == "image" {
+                assert!(body[campo].is_string(), "`image` debe ser una cadena");
+            } else {
+                assert!(body[campo].is_array(), "`images` debe ser un array");
+            }
+        }
+    }
+
+    /// Sin imágenes de referencia no debe colarse ni el campo de imagen ni
+    /// `strength`: en texto→imagen provocaban rechazos.
+    #[test]
+    fn en_texto_a_imagen_no_se_envia_ni_imagen_ni_strength() {
+        let spec = crate::models::CATALOG
+            .iter()
+            .find(|m| m.label == "WaveSpeed — Flux 2 Max")
+            .expect("modelo de referencia para el test");
+        let model = spec.wire_id(false).unwrap();
+        let body = wavespeed_body(spec, model, "un prompt", &[], I2iMode::DirectEdit, "").unwrap();
+        assert!(body.get("image").is_none());
+        assert!(body.get("images").is_none());
+        assert!(body.get("strength").is_none());
+        assert_eq!(body["prompt"], "un prompt");
+    }
 
     #[test]
     fn extension_por_magic_bytes() {

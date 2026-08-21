@@ -23,6 +23,15 @@ component RefImageRow inherits VerticalLayout {
     in property <bool> loaded;
     in property <color> tone;
     in property <color> tint;
+    /// Número de hueco (1-5) y máximo real del modelo seleccionado.
+    ///
+    /// Antes las pistas eran texto fijo con nombres de modelo dentro, y se
+    /// quedaban desfasadas en cuanto cambiaba la tabla. Ahora salen del propio
+    /// modelo elegido: si carga una imagen que ese modelo va a descartar, se
+    /// dice **aquí**, no después en el log.
+    in property <int> slot: 1;
+    in property <int> max-refs: 5;
+    property <bool> descartada: root.slot > root.max-refs;
     callback browse();
     callback clear();
 
@@ -43,7 +52,9 @@ component RefImageRow inherits VerticalLayout {
             border-radius: Theme.radius;
             border-width: 1px;
             background: root.loaded ? root.tint : Theme.field;
-            border-color: root.loaded ? root.tone : Theme.border;
+            border-color: root.descartada && root.loaded ? Theme.orange
+                        : root.loaded ? root.tone
+                        : Theme.border;
             horizontal-stretch: 1;
             HorizontalLayout {
                 padding-left: 8px;
@@ -51,8 +62,13 @@ component RefImageRow inherits VerticalLayout {
                 spacing: 6px;
                 Text { text: root.dot; font-size: 12px; vertical-alignment: center; }
                 Text {
-                    text: root.loaded ? root.path : root.hint;
-                    color: root.loaded ? root.tone : Theme.text-dim;
+                    text: root.loaded && root.descartada ? "⚠ " + root.path + "  — el modelo elegido no la usará"
+                        : root.loaded ? root.path
+                        : root.descartada ? "El modelo elegido no admite esta imagen"
+                        : root.hint;
+                    color: root.loaded && root.descartada ? Theme.orange
+                         : root.loaded ? root.tone
+                         : Theme.text-dim;
                     font-size: 10.5px;
                     font-weight: root.loaded ? 700 : 400;
                     vertical-alignment: center;
@@ -128,6 +144,18 @@ export component MainWindow inherits Window {
     // en orden con `MODEL_CATALOG`: si se desincronizaban, el desplegable
     // mostraba un nombre y se enviaba otro modelo. Ahora hay una sola fuente.
     in-out property <[string]> model-list: [];
+    /// Máximo de imágenes de referencia por modelo, en el mismo orden que
+    /// `model-list`. Lo rellena Rust desde la tabla de modelos, así que la
+    /// interfaz no puede contradecir a lo que se envía.
+    in-out property <[int]> model-max-refs-list: [];
+    property <int> model-max-refs:
+        root.model-index >= 0 && root.model-index < root.model-max-refs-list.length
+            ? root.model-max-refs-list[root.model-index]
+            : 1;
+    property <int> ref-images-loaded:
+        (root.ref-image-loaded  ? 1 : 0) + (root.ref-image2-loaded ? 1 : 0)
+      + (root.ref-image3-loaded ? 1 : 0) + (root.ref-image4-loaded ? 1 : 0)
+      + (root.ref-image5-loaded ? 1 : 0);
 
     in-out property <int>    theme-index: 0;
     in-out property <[string]> theme-list: [
@@ -582,6 +610,7 @@ export component MainWindow inherits Window {
                     RefImageRow {
                         label: "Img 1 (persona)"; dot: root.ref-image-loaded ? "🟢" : "⚪";
                         hint: "Sin imagen — solo texto";
+                        slot: 1; max-refs: root.model-max-refs;
                         path: root.ref-image-path; loaded: root.ref-image-loaded;
                         tone: Theme.green; tint: Theme.tint-green;
                         browse => { root.browse-ref-image(); }
@@ -589,7 +618,8 @@ export component MainWindow inherits Window {
                     }
                     RefImageRow {
                         label: "Img 2 (escena)"; dot: root.ref-image2-loaded ? "🔵" : "⚪";
-                        hint: "Opcional — xAI Grok, Flux Kontext Multi, UNO";
+                        hint: "Opcional — segunda referencia";
+                        slot: 2; max-refs: root.model-max-refs;
                         path: root.ref-image2-path; loaded: root.ref-image2-loaded;
                         tone: Theme.cyan; tint: Theme.tint-cyan;
                         browse => { root.browse-ref-image2(); }
@@ -597,7 +627,8 @@ export component MainWindow inherits Window {
                     }
                     RefImageRow {
                         label: "Img 3 (extra)"; dot: root.ref-image3-loaded ? "🟣" : "⚪";
-                        hint: "★ Solo Flux Kontext Multi / UNO";
+                        hint: "Opcional — referencia adicional";
+                        slot: 3; max-refs: root.model-max-refs;
                         path: root.ref-image3-path; loaded: root.ref-image3-loaded;
                         tone: Theme.purple; tint: Theme.tint-purple;
                         browse => { root.browse-ref-image3(); }
@@ -605,7 +636,8 @@ export component MainWindow inherits Window {
                     }
                     RefImageRow {
                         label: "Img 4 (extra)"; dot: root.ref-image4-loaded ? "🟠" : "⚪";
-                        hint: "★ Solo Flux Kontext Multi / UNO";
+                        hint: "Opcional — referencia adicional";
+                        slot: 4; max-refs: root.model-max-refs;
                         path: root.ref-image4-path; loaded: root.ref-image4-loaded;
                         tone: Theme.orange; tint: Theme.tint-orange;
                         browse => { root.browse-ref-image4(); }
@@ -613,7 +645,8 @@ export component MainWindow inherits Window {
                     }
                     RefImageRow {
                         label: "Img 5 (extra)"; dot: root.ref-image5-loaded ? "🟡" : "⚪";
-                        hint: "★ Solo Flux Kontext Multi / UNO";
+                        hint: "Opcional — referencia adicional";
+                        slot: 5; max-refs: root.model-max-refs;
                         path: root.ref-image5-path; loaded: root.ref-image5-loaded;
                         tone: Theme.yellow; tint: Theme.tint-yellow;
                         browse => { root.browse-ref-image5(); }
@@ -642,19 +675,25 @@ export component MainWindow inherits Window {
                     }
 
                     Text {
+                        // El texto sale del modelo elegido, no de una lista
+                        // de nombres escrita a mano que se queda vieja.
                         text: {
-                            if (root.ref-image5-loaded || root.ref-image4-loaded || root.ref-image3-loaded) {
-                                "★ Multi-ref activo — usa Flux Kontext Multi o UNO para aprovechar las 5 imágenes."
-                            } else if (root.ref-image-loaded && root.ref-image2-loaded) {
-                                "✅ 2 imágenes activas — xAI Grok (combina persona+escena) · Flux Kontext Multi / UNO (multi-ref)."
-                            } else if (root.ref-image-loaded) {
-                                "✅ Imagen 1 activa — xAI, OpenAI, WaveSpeed Flux Kontext, WAN. El randomizer sigue activo."
+                            if (root.ref-images-loaded == 0) {
+                                root.model-max-refs == 0
+                                    ? "ℹ El modelo elegido es solo texto→imagen: no acepta imágenes de referencia."
+                                    : root.model-max-refs == 1
+                                        ? "ℹ El modelo elegido admite una sola imagen de referencia."
+                                        : "ℹ El modelo elegido admite hasta " + root.model-max-refs + " imágenes de referencia."
+                            } else if (root.ref-images-loaded > root.model-max-refs) {
+                                "⚠ Has cargado " + root.ref-images-loaded + " imágenes y el modelo elegido solo usa "
+                                    + root.model-max-refs + ": las demás se descartarán."
                             } else {
-                                "ℹ Img 1+2: xAI Grok · Img 1: OpenAI/Flux Kontext/WAN · Imgs 1-5: Flux Kontext Multi / UNO"
+                                "✅ " + root.ref-images-loaded + " de " + root.model-max-refs
+                                    + " imágenes de referencia en uso. El randomizer sigue activo."
                             }
                         };
-                        color: (root.ref-image3-loaded || root.ref-image4-loaded || root.ref-image5-loaded) ? Theme.purple
-                             : root.ref-image-loaded ? Theme.green
+                        color: root.ref-images-loaded > root.model-max-refs ? Theme.orange
+                             : root.ref-images-loaded > 0 ? Theme.green
                              : Theme.text-dim;
                         font-size: 10.5px;
                         wrap: word-wrap;
