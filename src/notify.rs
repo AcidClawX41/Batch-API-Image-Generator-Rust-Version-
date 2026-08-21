@@ -20,10 +20,12 @@
 //!    macOS, el error se anota y se sigue generando. Una notificación es un
 //!    extra, jamás un requisito.
 //!
-//! Se usa a propósito el subconjunto de la API que existe en las tres
-//! plataformas (`summary`, `body`, `appname`). Métodos como `timeout()`,
-//! `hint()` o `urgency()` sólo están en algunas y obligarían a compilación
-//! condicional sin aportar nada aquí.
+//! El cuerpo común (`summary`, `body`, `appname`) existe en las tres
+//! plataformas. En Linux se añaden además, tras compilación condicional, un
+//! icono y la pista `desktop-entry`: sin ella GNOME Shell no sabe a qué
+//! aplicación pertenece el aviso y en algunas versiones lo degrada o lo manda
+//! directo a la bandeja sin mostrar el banner. Es la causa más habitual de
+//! «el programa dice que lo ha enviado y yo no veo nada».
 
 /// Qué acaba de pasar. Determina el título y si el aviso llega a salir.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,38 +149,164 @@ fn cuerpo(msg: &str) -> String {
     crate::util::truncate_chars(&limpio, 180)
 }
 
+/// Dónde contar lo que pasa con un aviso.
+///
+/// La primera versión mandaba los errores a `eprintln!`. Eso los hacía
+/// **invisibles**: quien arranca la aplicación desde el lanzador del
+/// escritorio no ve stderr, así que un fallo de D-Bus se traducía en «no
+/// aparece nada y no sé por qué». El resultado tiene que llegar al log de la
+/// aplicación, que es donde el usuario mira.
+pub type LogFn = std::sync::Arc<dyn Fn(String) + Send + Sync>;
+
+/// Nombre del fichero `.desktop` con el que se identifica la aplicación ante
+/// el escritorio. No hace falta que exista instalado para que el aviso salga,
+/// pero si existe, GNOME lo agrupa y le pone el icono correcto.
+pub const DESKTOP_ENTRY: &str = "batch-image-generator";
+
+/// Monta la notificación con lo común a las tres plataformas y, en Linux, con
+/// las pistas que el escritorio necesita para mostrarla como es debido.
+fn construir(summary: &str, body: &str) -> notify_rust::Notification {
+    let mut n = notify_rust::Notification::new();
+    n.summary(summary)
+        .body(body)
+        .appname("Batch Image Generator");
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Icono genérico del tema: siempre está, no depende de que hayamos
+        // instalado el nuestro.
+        n.icon("applications-graphics")
+            .hint(notify_rust::Hint::DesktopEntry(DESKTOP_ENTRY.to_string()))
+            // Que no se desvanezca en dos segundos mientras se está mirando
+            // otra ventana.
+            .timeout(notify_rust::Timeout::Milliseconds(8000));
+    }
+
+    n
+}
+
 /// Lanza el aviso si las preferencias lo permiten.
 ///
-/// Devuelve `true` si se ha intentado enviar. No espera al resultado: el
-/// envío ocurre en un hilo aparte para no bloquear el bucle de la interfaz.
-pub fn notify(settings: Settings, event: Event, msg: &str) -> bool {
+/// Devuelve `true` si se ha intentado enviar. El envío ocurre en un hilo
+/// aparte para no bloquear el bucle de la interfaz, y el resultado —incluido
+/// el error exacto— se cuenta por `log`.
+pub fn notify(settings: Settings, event: Event, msg: &str, log: &LogFn) -> bool {
     if !settings.should_notify(event) {
         return false;
     }
 
     let summary = titulo(event);
     let body = cuerpo(msg);
+    let log_hilo = log.clone();
+    let log = log.clone();
 
     std::thread::Builder::new()
         .name("notificacion".into())
-        .spawn(move || {
-            let resultado = notify_rust::Notification::new()
-                .summary(summary)
-                .body(&body)
-                .appname("Batch Image Generator")
-                .show();
-
-            if let Err(e) = resultado {
+        .spawn(move || match construir(summary, &body).show() {
+            Ok(_) => {}
+            Err(e) => {
                 // Sin demonio de notificaciones, sin permiso en macOS o sin
-                // sesión de escritorio. No es motivo para interrumpir nada.
-                eprintln!("[notify] no se pudo mostrar el aviso: {e}");
+                // sesión de escritorio. No es motivo para interrumpir nada,
+                // pero sí para decirlo donde se vea.
+                log_hilo(format!("🔕 El escritorio rechazó el aviso: {e}"));
+                log_hilo(diagnostico());
             }
         })
         .map(|_| true)
         .unwrap_or_else(|e| {
-            eprintln!("[notify] no se pudo crear el hilo: {e}");
+            log(format!("🔕 No se pudo crear el hilo de notificación: {e}"));
             false
         })
+}
+
+/// Aviso de prueba: informa del resultado real, no de que se haya lanzado.
+///
+/// La versión anterior escribía «Aviso de prueba enviado» en cuanto creaba el
+/// hilo, aunque `show()` fallara después. Decía que sí cuando la respuesta
+/// era que no.
+pub fn test(log: &LogFn) {
+    let log = log.clone();
+    std::thread::Builder::new()
+        .name("notificacion-prueba".into())
+        .spawn(move || {
+            log("🔔 Enviando aviso de prueba…".to_string());
+            match construir(
+                "✅ Batch Image Generator",
+                "Si ves esto, las notificaciones funcionan en tu escritorio.",
+            )
+            .show()
+            {
+                Ok(_) => log(
+                    "🔔 El escritorio aceptó el aviso. Si aun así no lo ves, revisa \
+                     «No molestar» y los permisos de notificación del sistema."
+                        .to_string(),
+                ),
+                Err(e) => {
+                    log(format!("🔕 El escritorio rechazó el aviso: {e}"));
+                    log(diagnostico());
+                }
+            }
+        })
+        .ok();
+}
+
+/// Reúne datos del entorno para explicar por qué no salen los avisos.
+///
+/// En Linux el transporte es D-Bus: sin `DBUS_SESSION_BUS_ADDRESS` no hay a
+/// quién hablarle, y es lo primero que hay que mirar.
+pub fn diagnostico() -> String {
+    let mut partes: Vec<String> = Vec::new();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        match std::env::var("DBUS_SESSION_BUS_ADDRESS") {
+            Ok(v) if !v.is_empty() => {
+                partes.push("D-Bus de sesión: presente".to_string());
+                match notify_rust::get_server_information() {
+                    Ok(info) => partes.push(format!(
+                        "demonio de notificaciones: {} {} ({})",
+                        info.name, info.version, info.vendor
+                    )),
+                    Err(e) => partes.push(format!(
+                        "no responde ningún demonio de notificaciones ({e}). \
+                         En un escritorio mínimo puede no haber ninguno instalado."
+                    )),
+                }
+            }
+            _ => partes.push(
+                "no hay DBUS_SESSION_BUS_ADDRESS: la aplicación no está en una sesión \
+                 de escritorio con D-Bus, así que no hay a quién enviar el aviso."
+                    .to_string(),
+            ),
+        }
+        if let Ok(d) = std::env::var("XDG_CURRENT_DESKTOP") {
+            partes.push(format!("escritorio: {d}"));
+        }
+        if let Ok(t) = std::env::var("XDG_SESSION_TYPE") {
+            partes.push(format!("sesión: {t}"));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    partes.push(
+        "en macOS hay que autorizar las notificaciones de la aplicación en \
+         Ajustes del Sistema → Notificaciones."
+            .to_string(),
+    );
+
+    #[cfg(target_os = "windows")]
+    partes.push(
+        "en Windows los toasts pueden quedar ocultos por el Asistente de \
+         concentración, y una aplicación sin acceso directo instalado aparece \
+         con identidad genérica."
+            .to_string(),
+    );
+
+    if partes.is_empty() {
+        "sin datos de diagnóstico para esta plataforma.".to_string()
+    } else {
+        format!("ℹ Diagnóstico — {}", partes.join(" · "))
+    }
 }
 
 #[cfg(test)]
@@ -280,6 +408,16 @@ mod tests {
     #[test]
     fn con_todo_apagado_notify_no_hace_nada() {
         let s = Settings { enabled: false, ..Settings::default() };
-        assert!(!notify(s, Event::Timeout, "da igual"));
+        let sin_log: LogFn = std::sync::Arc::new(|_| {});
+        assert!(!notify(s, Event::Timeout, "da igual", &sin_log));
+    }
+
+    /// El diagnóstico tiene que decir algo útil en cualquier entorno, también
+    /// sin sesión gráfica: es justo cuando más falta hace.
+    #[test]
+    fn el_diagnostico_siempre_dice_algo() {
+        let d = diagnostico();
+        assert!(!d.is_empty());
+        assert!(d.len() > 20, "diagnóstico demasiado escueto: {d}");
     }
 }

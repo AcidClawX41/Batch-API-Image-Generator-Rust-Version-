@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Batch Image Generator
+GenericName=Generador de imágenes por lotes
+Comment=Generación por lotes con randomizador de prompts (Eric Valls Gramunt)
+Exec=xai-imagine-generator
+Icon=applications-graphics
+Terminal=false
+Categories=Graphics;Utility;
+StartupNotify=true

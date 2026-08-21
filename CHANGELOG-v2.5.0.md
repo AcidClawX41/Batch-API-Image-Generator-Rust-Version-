@@ -382,10 +382,9 @@ Dos reglas en la implementación:
    en macOS o sin sesión de escritorio, el error se anota y se sigue
    generando. Un aviso es un extra, jamás un requisito.
 
-Se usa a propósito sólo el subconjunto de la API que existe en las tres
-plataformas (`summary`, `body`, `appname`). Métodos como `timeout()`, `hint()`
-o `urgency()` sólo están en algunas y obligarían a compilación condicional sin
-aportar nada.
+El cuerpo común (`summary`, `body`, `appname`) existe en las tres
+plataformas. En Linux se añaden además, tras compilación condicional, un icono
+y la pista `desktop-entry` (ver §10 bis).
 
 **Clasificar el fallo hay que hacerlo por el texto**: los proveedores no
 devuelven un código uniforme ni para «rechazado por contenido» ni para «se me
@@ -398,6 +397,81 @@ serían cientos de avisos. La interfaz lo advierte si lo activas.
 
 Verificado de punta a punta en Linux: demonio D-Bus real, aviso mostrado por
 el escritorio y capturado.
+
+---
+
+## 10 bis. Por qué no se veía ninguna notificación en Ubuntu
+
+Reportado tras la primera prueba real: las notificaciones estaban en ON, el
+log decía «Aviso de prueba enviado» y en el escritorio no aparecía nada.
+
+### El fallo era mío, y era de diseño
+
+Dos errores encadenados:
+
+1. **`notify()` mandaba los errores de `show()` a `eprintln!`.** Quien arranca
+   la aplicación desde el lanzador del escritorio no ve stderr. Es decir: hice
+   el error invisible justo en el único sitio donde hacía falta verlo.
+2. **El log mentía.** «Aviso de prueba enviado» se escribía en cuanto se creaba
+   el hilo, no cuando el escritorio aceptaba la notificación. Decía que sí
+   cuando la respuesta podía perfectamente haber sido que no.
+
+### Qué se ha hecho
+
+**El resultado real llega al log.** `notify()` y `test()` reciben ahora un
+canal de log (`LogFn`) y anotan lo que de verdad devuelve `show()`:
+
+```
+[AVISO] 🔔 Enviando aviso de prueba…
+[AVISO] 🔔 El escritorio aceptó el aviso. Si aun así no lo ves, revisa
+        «No molestar» y los permisos de notificación del sistema.
+[AVISO] ℹ Diagnóstico — D-Bus de sesión: presente · demonio de
+        notificaciones: dunst 1.9.2 (knopwob) · escritorio: GNOME ·
+        sesión: wayland
+```
+
+**`diagnostico()`** reúne los datos que separan las dos causas posibles: si
+hay `DBUS_SESSION_BUS_ADDRESS`, qué demonio responde a
+`GetServerInformation()`, y qué escritorio y tipo de sesión hay. En macOS y
+Windows emite en su lugar la pista propia de cada plataforma.
+
+**Pista `desktop-entry` e icono en Linux.** Sin ella GNOME Shell no sabe a qué
+aplicación pertenece el aviso, y en algunas versiones lo degrada a la bandeja
+en vez de mostrar el banner. Es la causa más frecuente de «se envía y no se
+ve». Se acompaña de `packaging/batch-image-generator.desktop`, cuyo nombre de
+fichero debe coincidir con la pista. También se fija un `timeout` de 8 s para
+que no se desvanezca mientras se mira otra ventana.
+
+**Modo diagnóstico sin interfaz:**
+
+```bash
+./xai-imagine-generator --test-notificacion
+```
+
+Imprime el diagnóstico y el resultado real por la terminal, sin abrir ventana.
+Existe porque «no veo notificaciones» tiene dos causas muy distintas —la
+aplicación no consigue enviarla, o el escritorio la recibe y no la muestra— y
+desde la ventana no se distinguen. Contraste útil: `notify-send "prueba"`
+desde la misma terminal; si tampoco aparece, el problema no es de esta
+aplicación.
+
+`packaging/README-notificaciones.md` recoge la tabla de interpretación y los
+sospechosos habituales en GNOME: **No molestar** activado y **pantalla
+completa** (GNOME retiene los banners mientras hay una ventana a pantalla
+completa y los suelta al salir — si se está jugando, es lo primero que hay que
+descartar).
+
+### Verificación
+
+Los dos caminos, comprobados en el contenedor:
+
+| Escenario | Salida |
+|---|---|
+| D-Bus + dunst reales | `El escritorio aceptó el aviso` + demonio identificado |
+| Sin `DBUS_SESSION_BUS_ADDRESS` | `El escritorio rechazó el aviso: I/O error…` + diagnóstico |
+
+Y desde la ventana: botón «Probar aviso» pulsado en una sesión headless con
+dunst, con las cuatro líneas correctas apareciendo en el log de la aplicación.
 
 ---
 
