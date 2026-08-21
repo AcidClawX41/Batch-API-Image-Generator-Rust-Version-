@@ -161,6 +161,15 @@ fn main() {
             .map(slint::SharedString::from)
             .collect::<Vec<_>>(),
     )));
+    // Mismo orden que la lista de nombres: la interfaz lee el máximo de
+    // referencias del modelo seleccionado y avisa antes de generar si hay
+    // imágenes cargadas que ese modelo va a descartar.
+    app.set_model_max_refs_list(slint::ModelRc::new(slint::VecModel::from(
+        models::CATALOG
+            .iter()
+            .map(|m| m.max_refs as i32)
+            .collect::<Vec<_>>(),
+    )));
 
     let cfg = config::Config::load();
     apply_config(&app, &cfg);
@@ -1499,6 +1508,23 @@ mod tests {
                 0,
                 "ui/main.slint ha vuelto a llevar la lista de modelos escrita a mano"
             );
+            assert_eq!(
+                app.get_model_max_refs_list().row_count(),
+                0,
+                "ui/main.slint ha vuelto a llevar los máximos escritos a mano"
+            );
+        }
+    }
+
+    /// La interfaz indexa `model-max-refs-list` con el índice del modelo
+    /// seleccionado. Si las dos listas no tienen el mismo tamaño y el mismo
+    /// orden, la ventana enseñaría el máximo de otro modelo.
+    #[test]
+    fn los_maximos_de_referencias_van_en_paralelo_a_los_nombres() {
+        let maximos: Vec<i32> = models::CATALOG.iter().map(|m| m.max_refs as i32).collect();
+        assert_eq!(maximos.len(), models::labels().len());
+        for (m, maximo) in models::CATALOG.iter().zip(&maximos) {
+            assert_eq!(*maximo, m.max_refs as i32, "desalineado en «{}»", m.label);
         }
     }
 }

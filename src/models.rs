@@ -327,8 +327,12 @@ pub const CATALOG: &[ModelSpec] = &[
         provider: ImageProvider::WaveSpeed,
         t2i_id: None,
         i2i_id: Some("wavespeed-ai/wan-2.2/image-to-image"),
-        ref_field: RefField::WsImages,
-        max_refs: 2,
+        // Verificado en la documentación: campo `image` (cadena única) y una
+        // sola imagen. Tenerlo como `images` provocaba
+        // «field "image" is required».
+        // https://wavespeed.ai/models/wavespeed-ai/wan-2.2/image-to-image
+        ref_field: RefField::WsImage,
+        max_refs: 1,
         aspect: "",
         size_style: SizeStyle::WsSize,
     },
@@ -341,8 +345,10 @@ pub const CATALOG: &[ModelSpec] = &[
         provider: ImageProvider::WaveSpeed,
         t2i_id: None,
         i2i_id: Some("alibaba/wan-2.7/image-edit"),
+        // Verificado: `images` (array) de 1 a 3.
+        // https://wavespeed.ai/models/alibaba/wan-2.7/image-edit
         ref_field: RefField::WsImages,
-        max_refs: 2,
+        max_refs: 3,
         aspect: "",
         size_style: SizeStyle::WsSize,
     },
@@ -454,8 +460,10 @@ pub const CATALOG: &[ModelSpec] = &[
         provider: ImageProvider::WaveSpeed,
         t2i_id: None,
         i2i_id: Some("wavespeed-ai/qwen-image/edit"),
-        ref_field: RefField::WsImages,
-        max_refs: 5,
+        // Verificado: `image` (cadena única), una imagen por petición.
+        // https://wavespeed.ai/models/wavespeed-ai/qwen-image/edit
+        ref_field: RefField::WsImage,
+        max_refs: 1,
         aspect: "",
         size_style: SizeStyle::WsSize,
     },
@@ -634,6 +642,47 @@ mod tests {
                 "«{}» no admite ni texto→imagen ni imagen→imagen",
                 m.label
             );
+        }
+    }
+
+    /// Un campo con un solo hueco no puede declarar que acepta varias
+    /// imágenes: se enviaría la primera y las demás se perderían en silencio.
+    #[test]
+    fn el_campo_de_imagen_unica_solo_admite_una_referencia() {
+        for m in CATALOG {
+            if matches!(m.ref_field, RefField::WsImage) {
+                assert_eq!(
+                    m.max_refs, 1,
+                    "«{}» usa el campo `image` (una sola) pero anuncia {} imágenes",
+                    m.label, m.max_refs
+                );
+            }
+        }
+    }
+
+    /// Estos valores están comprobados uno a uno contra la documentación de
+    /// WaveSpeed (URL junto a cada entrada de la tabla). Equivocarse aquí no
+    /// da un aviso: da un HTTP 400 en cada generación.
+    ///
+    /// Se fijan a propósito los modelos que ya fallaron en uso real, para que
+    /// un cambio despistado en la tabla rompa el test y no la aplicación.
+    #[test]
+    fn los_campos_de_imagen_de_wavespeed_estan_verificados() {
+        let esperado: &[(&str, RefField, usize)] = &[
+            ("WaveSpeed — WAN 2.2", RefField::WsImage, 1),
+            ("WaveSpeed — Qwen Image Edit", RefField::WsImage, 1),
+            ("WaveSpeed — WAN 2.7 Edit", RefField::WsImages, 3),
+            ("WaveSpeed — Grok Imagine Edit", RefField::WsImage, 1),
+            ("WaveSpeed — UNO", RefField::WsImages, 5),
+            ("WaveSpeed — Flux Kontext Max Multi", RefField::WsImages, 5),
+        ];
+        for (label, campo, maximo) in esperado {
+            let m = CATALOG
+                .iter()
+                .find(|m| m.label == *label)
+                .unwrap_or_else(|| panic!("«{label}» ya no está en la tabla"));
+            assert_eq!(m.ref_field, *campo, "campo de imagen de «{label}»");
+            assert_eq!(m.max_refs, *maximo, "máximo de referencias de «{label}»");
         }
     }
 
