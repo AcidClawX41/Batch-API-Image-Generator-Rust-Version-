@@ -118,6 +118,22 @@ fn trim_log(s: &str) -> String {
 }
 
 fn main() {
+    // Modo diagnóstico sin interfaz: `./xai-imagine-generator --test-notificacion`
+    //
+    // Existe porque «no veo ninguna notificación» tiene dos causas muy
+    // distintas —la aplicación no consigue enviarla, o el escritorio la
+    // recibe y no la muestra— y desde la ventana no se distinguen. Aquí el
+    // resultado real de `show()` sale por la terminal, sin ventana de por
+    // medio y sin depender de que el log se lea bien.
+    if std::env::args().any(|a| a == "--test-notificacion" || a == "--test-notification") {
+        let salida: notify::LogFn = Arc::new(|msg: String| println!("{msg}"));
+        println!("{}", notify::diagnostico());
+        notify::test(&salida);
+        // `test` envía en su propio hilo; se le da margen antes de salir.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        return;
+    }
+
     #[cfg(target_os = "macos")]
     {
         if std::env::var("SLINT_BACKEND").is_err() {
@@ -395,6 +411,28 @@ fn main() {
                 })
             };
 
+            // Canal de log para los avisos de escritorio. Antes, si el
+            // escritorio rechazaba la notificación, el error se iba a stderr:
+            // invisible para quien arranca la aplicación desde el lanzador.
+            // Ahora el fallo —y el diagnóstico del entorno— acaban en el log
+            // que el usuario sí ve.
+            let notify_log: notify::LogFn = {
+                let app_weak = app_weak.clone();
+                Arc::new(move |msg: String| {
+                    let app_weak = app_weak.clone();
+                    let ts = chrono::Local::now().format("%H:%M:%S").to_string();
+                    let line = format!("[{}] [AVISO] {}\n", ts, msg);
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            let mut next = app.get_log_text().to_string();
+                            next.push_str(&line);
+                            app.set_log_text(trim_log(&next).into());
+                        }
+                    })
+                    .ok();
+                })
+            };
+
             log(&format!("Proveedor: {}", provider.display_name()), "INFO");
             log(&format!("Modelo: {}", spec.label), "INFO");
             log(&format!("Carpeta: {}", output_dir), "INFO");
@@ -462,6 +500,7 @@ fn main() {
                                     notify_settings(&app),
                                     notify::Event::Success,
                                     &format!("Imagen #{} — {}", count, gen.filename),
+                                    &notify_log,
                                 );
 
                                 let mut st = state2.lock().unwrap();
@@ -496,7 +535,12 @@ fn main() {
                                 // proveedor: no hay un código uniforme para
                                 // «rechazado por contenido» ni para «se me
                                 // acabó el tiempo».
-                                notify::notify(notify_settings(&app), notify::classify(&e), &e);
+                                notify::notify(
+                                    notify_settings(&app),
+                                    notify::classify(&e),
+                                    &e,
+                                    &notify_log,
+                                );
 
                                 let mut st = state2.lock().unwrap();
                                 if st.running {
@@ -744,27 +788,24 @@ fn main() {
         let log = append_log.clone();
         app.on_test_notification(move || {
             if let Some(app) = app_weak.upgrade() {
-                // El aviso de prueba se manda saltándose los interruptores
-                // por tipo: el usuario quiere ver si su escritorio los
-                // muestra, no comprobar sus preferencias.
-                let s = notify::Settings {
-                    enabled: app.get_notify_enabled(),
-                    on_success: true,
-                    ..notify::Settings::default()
+                // El aviso de prueba se manda saltándose los interruptores por
+                // tipo: el usuario quiere ver si su escritorio los muestra, no
+                // comprobar sus preferencias. El interruptor general sí se
+                // respeta, porque apagarlo significa «no quiero avisos».
+                if !app.get_notify_enabled() {
+                    log("🔕 No se envió el aviso de prueba (notificaciones desactivadas).", "INFO");
+                    return;
+                }
+                // `notify::test` cuenta el resultado **real** de `show()`, no
+                // el hecho de haber lanzado el hilo. Si el escritorio lo
+                // rechaza, el error y el diagnóstico del entorno acaban aquí,
+                // en el log que el usuario ve.
+                let sink: notify::LogFn = {
+                    let log = log.clone();
+                    Arc::new(move |msg: String| log(&msg, "AVISO"))
                 };
-                let enviado = notify::notify(
-                    s,
-                    notify::Event::Success,
-                    "Si ves esto, las notificaciones funcionan en tu escritorio.",
-                );
-                log(
-                    if enviado {
-                        "🔔 Aviso de prueba enviado. Si no aparece, revisa las notificaciones del sistema."
-                    } else {
-                        "🔕 No se envió el aviso de prueba (notificaciones desactivadas)."
-                    },
-                    "INFO",
-                );
+                notify::test(&sink);
+                log(&notify::diagnostico(), "AVISO");
             }
         });
     }
