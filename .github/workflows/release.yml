@@ -1,44 +1,81 @@
+# Build & Release — compila los binarios de las tres plataformas.
+#
+# Batch Image Generator — Eric Valls Gramunt
+#
+# QUÉ SE ARREGLÓ AQUÍ
+# -------------------
+# La versión anterior subía **cada binario dos veces**: primero con su nombre
+# de compilación (`xai-imagine-generator`) y después con el nombre por
+# plataforma. El problema es que Linux y macOS producen un ejecutable con el
+# mismo nombre, así que ambos subían un asset llamado `xai-imagine-generator`
+# a la misma release: se pisaban entre ellos y quedaba uno solo, sin manera de
+# saber cuál. Ahora se sube una vez, siempre con el nombre de la plataforma.
+#
+# También se añade macOS Intel (los Mac anteriores a 2020 no ejecutan un
+# binario arm64) y se puede lanzar a mano o por etiqueta, sin tener que crear
+# antes la release desde la web.
+
 name: Build & Release
 
 on:
+  # Publicar una release sigue disparando las compilaciones.
   release:
     types: [published]
+  # Empujar una etiqueta v* crea la release y sube los binarios.
+  push:
+    tags: ['v*']
+  # Y desde la pestaña Actions se puede compilar sin publicar nada: los
+  # binarios quedan como artefactos de la ejecución durante 30 días.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
+    name: ${{ matrix.nombre }}
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: xai-imagine-generator.exe
-            name: xai-imagine-generator-windows.exe
+            binario: xai-imagine-generator.exe
+            nombre: batch-image-generator-windows-x86_64.exe
 
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            artifact: xai-imagine-generator
-            name: xai-imagine-generator-linux
+            binario: xai-imagine-generator
+            nombre: batch-image-generator-linux-x86_64
 
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: xai-imagine-generator
-            name: xai-imagine-generator-macos-arm64
+            binario: xai-imagine-generator
+            nombre: batch-image-generator-macos-arm64
 
-    runs-on: ${{ matrix.os }}
+          - os: macos-13
+            target: x86_64-apple-darwin
+            binario: xai-imagine-generator
+            nombre: batch-image-generator-macos-x86_64
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install Linux dependencies
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Slint necesita fontconfig y xkbcommon para compilar el backend de
+      # ventanas; ubuntu-22.04 no los trae de serie.
+      - name: Dependencias de Linux
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -52,24 +89,69 @@ jobs:
             pkg-config \
             cmake
 
-      - name: Build release
+      # Se compila el árbol tal cual: si los tests o clippy fallan, es mejor
+      # enterarse aquí que publicar una release rota.
+      - name: Tests
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: Clippy
+        run: cargo clippy --all-targets --target ${{ matrix.target }} -- -D warnings
+
+      - name: Compilar release
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Upload binary to release
+      - name: Preparar el artefacto
+        shell: bash
+        run: |
+          set -euo pipefail
+          origen="target/${{ matrix.target }}/release/${{ matrix.binario }}"
+          cp "$origen" "${{ matrix.nombre }}"
+          # `strip` reduce bastante el tamaño; en Windows no aplica.
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            strip "${{ matrix.nombre }}" || true
+            chmod +x "${{ matrix.nombre }}"
+          fi
+          ls -la "${{ matrix.nombre }}"
+
+      # Siempre disponible, se publique o no la release.
+      - name: Guardar como artefacto de la ejecución
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.nombre }}
+          path: ${{ matrix.nombre }}
+          retention-days: 30
+
+      # Una sola subida por plataforma, con nombre único: sin colisiones.
+      - name: Subir a la release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: target/${{ matrix.target }}/release/${{ matrix.artifact }}
+          files: ${{ matrix.nombre }}
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Rename and upload with platform name
-        shell: bash
-        run: |
-          cp "target/${{ matrix.target }}/release/${{ matrix.artifact }}" "${{ matrix.name }}"
-      
-      - name: Upload renamed binary
+  # Los ficheros de instalación del escritorio no dependen de la plataforma:
+  # se empaquetan una vez.
+  extras:
+    name: Extras de Linux
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Empaquetar
+        run: tar czf batch-image-generator-packaging.tar.gz packaging/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: batch-image-generator-packaging
+          path: batch-image-generator-packaging.tar.gz
+          retention-days: 30
+
+      - name: Subir a la release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.name }}
+          files: batch-image-generator-packaging.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
