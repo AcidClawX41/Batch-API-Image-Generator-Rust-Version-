@@ -1,5 +1,10 @@
 # ⚡ Batch API Image Generator v2.5.0 (Rust + Slint)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/AcidClawX41/Batch-API-Image-Generator-Rust-Version-/actions/workflows/ci.yml/badge.svg)](https://github.com/AcidClawX41/Batch-API-Image-Generator-Rust-Version-/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AcidClawX41/Batch-API-Image-Generator-Rust-Version-)](https://github.com/AcidClawX41/Batch-API-Image-Generator-Rust-Version-/releases)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
+
 Desktop batch image generator built with **Rust + Slint**. Generates AI images at configurable intervals with a powerful prompt randomizer engine, advanced **Image-to-Image** conditioning with up to **5 reference images**, and **Burst Generation** for continuous non-stop generation. Supports **51 models** across 5 API providers (xAI, Google, OpenAI, WaveSpeed, Kie.AI).
 
 ---
@@ -127,7 +132,7 @@ Success is **off** by default: in a long Burst it would be hundreds of alerts.
 Diagnostics without opening the window:
 
 ```bash
-./xai-imagine-generator --test-notificacion
+./xai-imagine-generator --test-notification
 ```
 
 Prints the real result of the call plus the environment (session D-Bus, which
@@ -154,9 +159,12 @@ Choose output resolution for all WaveSpeed models directly from the UI: **Auto**
 
 ### 🔄 Batch Loop
 Configurable interval (10–600 seconds) between generations. Status countdown shows remaining time. Three control buttons:
-- **▶ Iniciar Loop** — start the batch loop at configured interval
+- **▶ Iniciar Loop** *(Start Loop)* — start the batch loop at the configured interval
 - **⚡⚡ Burst** — continuous generation with no pause
-- **■ Detener** — stop either mode
+- **■ Detener** *(Stop)* — stop either mode
+
+> The UI ships with Spanish labels; this README glosses them in English where
+> they appear.
 
 ### 🎲 Prompt Randomizer
 - **Mode A** — Write your own prompt; the randomizer injects additional details (outfit, lighting, pose, camera, nails, expression, etc.)
@@ -193,6 +201,11 @@ The binary will be at `target/release/xai-imagine-generator` (or `.exe` on Windo
   - [Google AI Studio](https://aistudio.google.com) for Gemini / Nano Banana (direct)
   - [OpenAI Platform](https://platform.openai.com) for GPT Image / DALL-E (direct)
   - [WaveSpeed.ai](https://wavespeed.ai) for Flux, Seedream, WAN, Grok via WaveSpeed, and 30+ more models
+  - [Kie.AI](https://kie.ai) for GPT Image 2, Nano Banana, Seedream, Flux.2 and Qwen
+
+Prebuilt binaries for Windows, macOS (Intel and Apple Silicon) and Linux are
+attached to every [release](https://github.com/AcidClawX41/Batch-API-Image-Generator-Rust-Version-/releases).
+On Linux and macOS, `chmod +x` the binary before running it.
 
 ---
 
@@ -335,4 +348,30 @@ Use OpenAI-compatible endpoints returning `b64_json`. Output saved directly from
 
 ## License
 
-See [LICENSE](LICENSE).
+Released under the **MIT License** — see [LICENSE](LICENSE) for the full text.
+
+```
+Copyright (c) 2026 Eric .V
+```
+
+You are free to use, copy, modify, merge, publish, distribute, sublicense and
+sell copies of this software, provided the copyright notice and the permission
+notice are included in all copies or substantial portions of it. The software is
+provided "as is", without warranty of any kind.
+
+### Third-party services
+
+The MIT licence covers **this application only**. Images you generate are
+subject to the terms of whichever provider produced them — xAI, Google, OpenAI,
+WaveSpeed.ai or Kie.AI — including their content policies and their rules on
+commercial use. Check each provider's terms before publishing or selling
+generated output.
+
+---
+
+## Author
+
+**Eric Valls Gramunt** — [@AcidClawX41](https://github.com/AcidClawX41)
+
+*The copyright line above is quoted verbatim from [`LICENSE`](LICENSE). If you
+want your full name there, edit `LICENSE` and this section will need to match.*
