@@ -1459,7 +1459,6 @@ fn collect_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use slint::Model;
 
     #[test]
     fn el_log_no_crece_sin_limite() {
@@ -1493,25 +1492,40 @@ mod tests {
         assert!(acc.len() <= LOG_MAX_BYTES + 64, "no converge: {}", acc.len());
     }
 
+    /// Ya no puede desincronizarse: la lista se genera desde `CATALOG`. Este
+    /// test protege de que alguien vuelva a escribirla a mano en el `.slint`.
+    ///
+    /// POR QUÉ AQUÍ NO SE ABRE LA VENTANA
+    /// ----------------------------------
+    /// La versión anterior llamaba a `MainWindow::new()`. En Linux headless
+    /// eso devolvía `Err` y el `if let Ok` se saltaba la comprobación —el
+    /// test pasaba sin comprobar nada—, pero en macOS entra en **pánico**:
+    /// AppKit exige que el bucle de eventos se cree en el hilo principal y el
+    /// arnés de `cargo test` ejecuta cada prueba en un hilo aparte, así que
+    /// winit aborta con «on macOS, `EventLoop` must be created on the main
+    /// thread!» y `cargo test` termina con código 101. Ése era el fallo del
+    /// trabajo de CI de macOS.
+    ///
+    /// Una prueba unitaria no debe abrir una ventana. Lo que de verdad se
+    /// quiere proteger es lo que declara el `.slint`, y eso se lee igual en
+    /// las tres plataformas y sin sesión gráfica.
     #[test]
     fn la_lista_de_la_ui_sale_de_la_tabla_de_modelos() {
-        // Ya no puede desincronizarse: se genera. El test protege de que
-        // alguien vuelva a escribirla a mano en el .slint.
         let etiquetas = models::labels();
         assert_eq!(etiquetas.len(), models::CATALOG.len());
         assert!(etiquetas.iter().any(|e| e.starts_with("Kie.AI")));
 
-        if let Ok(app) = MainWindow::new() {
-            // El valor por defecto declarado en el .slint debe estar vacío.
-            assert_eq!(
-                app.get_model_list().row_count(),
-                0,
-                "ui/main.slint ha vuelto a llevar la lista de modelos escrita a mano"
-            );
-            assert_eq!(
-                app.get_model_max_refs_list().row_count(),
-                0,
-                "ui/main.slint ha vuelto a llevar los máximos escritos a mano"
+        const UI: &str = include_str!("../ui/main.slint");
+        for propiedad in ["model-list", "model-max-refs-list"] {
+            let marca = format!("> {propiedad}:");
+            let declaracion = UI
+                .lines()
+                .map(str::trim)
+                .find(|l| l.starts_with("in-out property <[") && l.contains(&marca))
+                .unwrap_or_else(|| panic!("ui/main.slint ya no declara «{propiedad}»"));
+            assert!(
+                declaracion.ends_with(": [];"),
+                "ui/main.slint ha vuelto a llevar «{propiedad}» escrita a mano: {declaracion}"
             );
         }
     }
