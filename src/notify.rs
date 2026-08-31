@@ -161,6 +161,13 @@ pub type LogFn = std::sync::Arc<dyn Fn(String) + Send + Sync>;
 /// Nombre del fichero `.desktop` con el que se identifica la aplicación ante
 /// el escritorio. No hace falta que exista instalado para que el aviso salga,
 /// pero si existe, GNOME lo agrupa y le pone el icono correcto.
+///
+/// Sólo existe en la plataforma que lo usa. La pista `desktop-entry` es de la
+/// especificación XDG: en Windows y en macOS no hay dónde aplicarla, así que
+/// la constante quedaba declarada y sin usar y `dead_code` la señalaba. Con
+/// `cargo clippy -- -D warnings` ese aviso es un error, y era lo que rompía
+/// el trabajo de CI de Windows.
+#[cfg(all(unix, not(target_os = "macos")))]
 pub const DESKTOP_ENTRY: &str = "batch-image-generator";
 
 /// Monta la notificación con lo común a las tres plataformas y, en Linux, con

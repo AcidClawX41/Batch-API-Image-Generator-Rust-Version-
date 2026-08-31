@@ -63,7 +63,7 @@ jobs:
             nombre: batch-image-generator-macos-x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -115,7 +115,7 @@ jobs:
 
       # Siempre disponible, se publique o no la release.
       - name: Guardar como artefacto de la ejecución
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.nombre }}
           path: ${{ matrix.nombre }}
@@ -137,12 +137,12 @@ jobs:
     name: Extras de Linux
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Empaquetar
         run: tar czf batch-image-generator-packaging.tar.gz packaging/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: batch-image-generator-packaging
           path: batch-image-generator-packaging.tar.gz
